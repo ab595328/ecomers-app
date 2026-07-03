@@ -182,6 +182,11 @@ fun Order.toMap(): Map<String, Any> {
         "email" to email,
         "orderDate" to orderDate,
         "totalAmount" to totalAmount,
+        "itemsAmount" to itemsAmount,
+        "deliveryDistanceKm" to deliveryDistanceKm,
+        "deliveryFixedCharge" to deliveryFixedCharge,
+        "deliveryPerKmCharge" to deliveryPerKmCharge,
+        "deliveryCharge" to deliveryCharge,
         "status" to status,
         "itemsSummary" to itemsSummary,
         "deliveryAddress" to deliveryAddress,
@@ -205,6 +210,11 @@ fun Map<String, Any?>.toOrder(): Order {
         email = this["email"] as? String ?: "",
         orderDate = (this["orderDate"] as? Number)?.toLong() ?: 0L,
         totalAmount = (this["totalAmount"] as? Number)?.toDouble() ?: 0.0,
+        itemsAmount = (this["itemsAmount"] as? Number)?.toDouble() ?: 0.0,
+        deliveryDistanceKm = (this["deliveryDistanceKm"] as? Number)?.toDouble() ?: 0.0,
+        deliveryFixedCharge = (this["deliveryFixedCharge"] as? Number)?.toDouble() ?: 0.0,
+        deliveryPerKmCharge = (this["deliveryPerKmCharge"] as? Number)?.toDouble() ?: 0.0,
+        deliveryCharge = (this["deliveryCharge"] as? Number)?.toDouble() ?: 0.0,
         status = this["status"] as? String ?: "",
         itemsSummary = this["itemsSummary"] as? String ?: "",
         deliveryAddress = this["deliveryAddress"] as? String ?: "",
@@ -230,6 +240,11 @@ data class PendingCheckout(
     val coupon: String,
     val addressLat: Double = 0.0,
     val addressLng: Double = 0.0,
+    val itemsAmount: Double = 0.0,
+    val deliveryDistanceKm: Double = 0.0,
+    val deliveryFixedCharge: Double = 0.0,
+    val deliveryPerKmCharge: Double = 0.0,
+    val deliveryCharge: Double = 0.0,
     val clearCartAfterCheckout: Boolean = true
 )
 
@@ -1092,6 +1107,11 @@ class BazaarViewModel(application: Application) : AndroidViewModel(application) 
         couponApplied: String = "",
         deliveryAddressLat: Double = 0.0,
         deliveryAddressLng: Double = 0.0,
+        itemsAmount: Double = 0.0,
+        deliveryDistanceKm: Double = 0.0,
+        deliveryFixedCharge: Double = 0.0,
+        deliveryPerKmCharge: Double = 0.0,
+        deliveryCharge: Double = 0.0,
         paymentMode: String = "COD",
         paymentTransactionId: String = "",
         clearCartAfterCheckout: Boolean = true
@@ -1104,6 +1124,11 @@ class BazaarViewModel(application: Application) : AndroidViewModel(application) 
                 email = user.email,
                 orderDate = System.currentTimeMillis(),
                 totalAmount = totalAmount,
+                itemsAmount = itemsAmount,
+                deliveryDistanceKm = deliveryDistanceKm,
+                deliveryFixedCharge = deliveryFixedCharge,
+                deliveryPerKmCharge = deliveryPerKmCharge,
+                deliveryCharge = deliveryCharge,
                 status = "Processing",
                 itemsSummary = summary,
                 deliveryAddress = deliveryAddress,
@@ -1230,11 +1255,12 @@ class BazaarViewModel(application: Application) : AndroidViewModel(application) 
         viewModelScope.launch {
             val orderList = allOrders.value
             val found = orderList.find { it.orderId == orderId }
-            if (found != null) {
+            val requestAgeMs = System.currentTimeMillis() - (found?.orderDate ?: 0L)
+            if (found != null && found.deliveryPartnerEmail.isBlank() && requestAgeMs <= 24 * 60 * 60 * 1000L) {
                 val updated = found.copy(
                     deliveryPartnerEmail = deliveryPartnerEmail,
                     status = "Delivery Accepted",
-                    deliveryStatus = "On the Way"
+                    deliveryStatus = "Shipping Ready"
                 )
                 repository.updateOrder(updated)
                 try {
@@ -1256,7 +1282,7 @@ class BazaarViewModel(application: Application) : AndroidViewModel(application) 
                 val updated = found.copy(
                     deliveryPartnerEmail = "",
                     deliveryStatus = "",
-                    status = "Processing"
+                    status = if (found.sellerConfirmed) "Shipping Ready" else "Processing"
                 )
                 repository.updateOrder(updated)
                 try {
@@ -1302,7 +1328,7 @@ class BazaarViewModel(application: Application) : AndroidViewModel(application) 
             val orderList = allOrders.value
             val found = orderList.find { it.orderId == orderId }
             if (found != null) {
-                val updated = found.copy(sellerConfirmed = true, status = "Ready for Delivery")
+                val updated = found.copy(sellerConfirmed = true, status = "Shipping Ready", deliveryStatus = "")
                 repository.updateOrder(updated)
                 try {
                     FirebaseFirestore.getInstance().collection("orders")
@@ -1342,7 +1368,7 @@ class BazaarViewModel(application: Application) : AndroidViewModel(application) 
                     sellerChangeDeliveryBoyRequested = true,
                     deliveryPartnerEmail = "", // reset delivery partner assignment so someone else accepts
                     deliveryStatus = "",
-                    status = "Processing"
+                    status = "Shipping Ready"
                 )
                 repository.updateOrder(updated)
                 try {

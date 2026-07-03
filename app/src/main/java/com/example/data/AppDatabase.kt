@@ -105,6 +105,11 @@ data class Order(
     val email: String,
     val orderDate: Long,
     val totalAmount: Double,
+    val itemsAmount: Double = 0.0,
+    val deliveryDistanceKm: Double = 0.0,
+    val deliveryFixedCharge: Double = 0.0,
+    val deliveryPerKmCharge: Double = 0.0,
+    val deliveryCharge: Double = 0.0,
     val status: String, // "Processing", "Shipped", "Delivered", "Cancelled"
     val itemsSummary: String,
     val deliveryAddress: String = "",
@@ -241,7 +246,7 @@ interface AppDao {
 // --- App Database ---
 @Database(
     entities = [User::class, Product::class, CartItem::class, WishlistItem::class, Order::class],
-    version = 6,
+    version = 7,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -421,6 +426,11 @@ class AppRepository(private val appDao: AppDao) {
             email = map["email"] as? String ?: "",
             orderDate = (map["orderDate"] as? Number)?.toLong() ?: 0L,
             totalAmount = (map["totalAmount"] as? Number)?.toDouble() ?: 0.0,
+            itemsAmount = (map["itemsAmount"] as? Number)?.toDouble() ?: 0.0,
+            deliveryDistanceKm = (map["deliveryDistanceKm"] as? Number)?.toDouble() ?: 0.0,
+            deliveryFixedCharge = (map["deliveryFixedCharge"] as? Number)?.toDouble() ?: 0.0,
+            deliveryPerKmCharge = (map["deliveryPerKmCharge"] as? Number)?.toDouble() ?: 0.0,
+            deliveryCharge = (map["deliveryCharge"] as? Number)?.toDouble() ?: 0.0,
             status = map["status"] as? String ?: "",
             itemsSummary = map["itemsSummary"] as? String ?: "",
             deliveryAddress = map["deliveryAddress"] as? String ?: "",
@@ -443,6 +453,11 @@ class AppRepository(private val appDao: AppDao) {
             "email" to o.email,
             "orderDate" to o.orderDate,
             "totalAmount" to o.totalAmount,
+            "itemsAmount" to o.itemsAmount,
+            "deliveryDistanceKm" to o.deliveryDistanceKm,
+            "deliveryFixedCharge" to o.deliveryFixedCharge,
+            "deliveryPerKmCharge" to o.deliveryPerKmCharge,
+            "deliveryCharge" to o.deliveryCharge,
             "status" to o.status,
             "itemsSummary" to o.itemsSummary,
             "deliveryAddress" to o.deliveryAddress,

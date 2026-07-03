@@ -65,6 +65,9 @@ import com.example.data.Product
 import com.example.data.Banner
 import com.example.data.Coupon
 import com.example.data.Shortcut
+import com.example.data.calculateDeliveryCharge
+import com.example.data.estimateDeliveryDistanceKm
+import com.example.data.estimateItemAmountFromOrderTotal
 import com.example.ui.theme.*
 import com.example.viewmodel.AuthState
 import com.example.viewmodel.BazaarViewModel
@@ -1745,6 +1748,11 @@ fun MainScreen(
                             couponApplied = pending.coupon,
                             deliveryAddressLat = pending.addressLat,
                             deliveryAddressLng = pending.addressLng,
+                            itemsAmount = pending.itemsAmount,
+                            deliveryDistanceKm = pending.deliveryDistanceKm,
+                            deliveryFixedCharge = pending.deliveryFixedCharge,
+                            deliveryPerKmCharge = pending.deliveryPerKmCharge,
+                            deliveryCharge = pending.deliveryCharge,
                             paymentMode = "Online Payment",
                             paymentTransactionId = result.paymentId,
                             clearCartAfterCheckout = pending.clearCartAfterCheckout
@@ -3217,7 +3225,7 @@ fun CartScreen(
     var cartTempAddressLng by remember { mutableStateOf(0.0) }
     var cartCouponText by remember { mutableStateOf("") }
     var cartIsCouponApplied by remember { mutableStateOf(false) }
-    var generatedCartOrderId by remember { mutableStateOf("") }
+    var generatedCartOrderId by remember { mutableStateOf("ZVB-" + (System.currentTimeMillis() % 100000000).toString()) }
     var estimatedDeliveryDate by remember { mutableStateOf("") }
 
     // Synchronize default values when user completes database syncing
@@ -3231,7 +3239,6 @@ fun CartScreen(
 
     LaunchedEffect(showCartCheckoutDialog) {
         if (showCartCheckoutDialog) {
-            generatedCartOrderId = "ZVB-" + (System.currentTimeMillis() % 100000000).toString()
             estimatedDeliveryDate = "In 2-3 Days (Standard)"
         }
     }
@@ -3250,8 +3257,6 @@ fun CartScreen(
     }
 
     val totalSubtotal = computedItems.sumOf { it.first.quantity * it.second.price }
-    val shippingFee = if (totalSubtotal > 50.0) 0.0 else 5.0
-    val grandTotal = totalSubtotal + shippingFee
 
     val appliedCoupon = if (cartIsCouponApplied) {
         viewModel.validateCoupon(cartCouponText)
@@ -3259,8 +3264,11 @@ fun CartScreen(
         null
     }
     val discountPercent = appliedCoupon?.discountPercent ?: 0
-    val cartDiscountAmount = grandTotal * (discountPercent / 100.0)
-    val cartFinalTotal = grandTotal - cartDiscountAmount
+    val cartDiscountAmount = totalSubtotal * (discountPercent / 100.0)
+    val cartPayableBeforeDelivery = (totalSubtotal - cartDiscountAmount).coerceAtLeast(0.0)
+    val cartDeliveryDistanceKm = estimateDeliveryDistanceKm(generatedCartOrderId)
+    val cartDeliveryCharge = calculateDeliveryCharge(cartPayableBeforeDelivery, cartDeliveryDistanceKm)
+    val cartFinalTotal = cartPayableBeforeDelivery + cartDeliveryCharge.totalCharge
 
     Box(modifier = Modifier.fillMaxSize()) {
     Column(
@@ -3351,9 +3359,14 @@ fun CartScreen(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
-                        Text("Eco Delivery Fee", color = MutedText)
-                        Text(if (shippingFee == 0.0) "FREE" else "₹$shippingFee", fontWeight = FontWeight.Bold, color = DarkGreenPrimary)
+                        Text("Delivery Charge (${String.format("%.1f", cartDeliveryDistanceKm)} km)", color = MutedText)
+                        Text("₹${String.format("%.2f", cartDeliveryCharge.totalCharge)}", fontWeight = FontWeight.Bold, color = DarkGreenPrimary)
                     }
+                    Text(
+                        text = "Fixed ₹${String.format("%.0f", cartDeliveryCharge.fixedCharge)} + ₹${String.format("%.0f", cartDeliveryCharge.perKmCharge)}/km",
+                        color = MutedText,
+                        fontSize = 11.sp
+                    )
 
                     Spacer(modifier = Modifier.height(6.dp))
                     Divider(color = Color.LightGray, thickness = 1.dp)
@@ -3365,7 +3378,7 @@ fun CartScreen(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text("Total Amount", fontWeight = FontWeight.Black, style = MaterialTheme.typography.titleMedium, color = RichBlack)
-                        Text("₹${String.format("%.2f", grandTotal)}", fontWeight = FontWeight.Black, style = MaterialTheme.typography.titleLarge, color = DarkGreenPrimary)
+                        Text("₹${String.format("%.2f", cartFinalTotal)}", fontWeight = FontWeight.Black, style = MaterialTheme.typography.titleLarge, color = DarkGreenPrimary)
                     }
 
                     Spacer(modifier = Modifier.height(16.dp))
@@ -3547,7 +3560,7 @@ fun CartScreen(
                                 Column(modifier = Modifier.padding(10.dp)) {
                                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                                         Text("Cart Subtotal:", fontSize = 11.sp, color = MutedText)
-                                        Text("₹${String.format("%.2f", grandTotal)}", fontSize = 11.sp, color = RichBlack)
+                                        Text("₹${String.format("%.2f", totalSubtotal)}", fontSize = 11.sp, color = RichBlack)
                                     }
                                     if (cartIsCouponApplied && appliedCoupon != null) {
                                         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
@@ -3555,6 +3568,15 @@ fun CartScreen(
                                             Text("-₹${String.format("%.2f", cartDiscountAmount)}", fontSize = 11.sp, color = DarkGreenPrimary, fontWeight = FontWeight.Bold)
                                         }
                                     }
+                                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                        Text("Delivery (${String.format("%.1f", cartDeliveryDistanceKm)} km):", fontSize = 11.sp, color = MutedText)
+                                        Text("+₹${String.format("%.2f", cartDeliveryCharge.totalCharge)}", fontSize = 11.sp, color = DarkGreenPrimary, fontWeight = FontWeight.Bold)
+                                    }
+                                    Text(
+                                        text = "Fixed ₹${String.format("%.0f", cartDeliveryCharge.fixedCharge)} + ₹${String.format("%.0f", cartDeliveryCharge.perKmCharge)}/km",
+                                        fontSize = 10.sp,
+                                        color = MutedText
+                                    )
                                     Divider(color = Color.LightGray, modifier = Modifier.padding(vertical = 4.dp))
                                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                                         Text("Final Payable:", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = RichBlack)
@@ -3580,7 +3602,12 @@ fun CartScreen(
                                                 address = cartTempAddress,
                                                 coupon = if (cartIsCouponApplied) cartCouponText else "",
                                                 addressLat = cartTempAddressLat,
-                                                addressLng = cartTempAddressLng
+                                                addressLng = cartTempAddressLng,
+                                                itemsAmount = cartPayableBeforeDelivery,
+                                                deliveryDistanceKm = cartDeliveryDistanceKm,
+                                                deliveryFixedCharge = cartDeliveryCharge.fixedCharge,
+                                                deliveryPerKmCharge = cartDeliveryCharge.perKmCharge,
+                                                deliveryCharge = cartDeliveryCharge.totalCharge
                                             )
                                         )
                                         try {
@@ -4258,9 +4285,22 @@ fun OrdersScreen(viewModel: BazaarViewModel) {
                             border = BorderStroke(1.dp, SoftGrey)
                         ) {
                             Column(modifier = Modifier.padding(12.dp)) {
+                                val deliveryDistanceKm = estimateDeliveryDistanceKm(order.orderId)
+                                val itemAmount = order.itemsAmount.takeIf { it > 0.0 }
+                                    ?: estimateItemAmountFromOrderTotal(order.totalAmount, deliveryDistanceKm)
+                                val deliveryCharge = if (order.deliveryCharge > 0.0) {
+                                    com.example.data.DeliveryChargeBreakdown(
+                                        distanceKm = order.deliveryDistanceKm.takeIf { it > 0.0 } ?: deliveryDistanceKm,
+                                        fixedCharge = order.deliveryFixedCharge,
+                                        perKmCharge = order.deliveryPerKmCharge,
+                                        totalCharge = order.deliveryCharge
+                                    )
+                                } else {
+                                    calculateDeliveryCharge(itemAmount, deliveryDistanceKm)
+                                }
                                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                                    Text("Subtotal", fontSize = 11.sp, color = MutedText)
-                                    Text("₹${String.format("%.2f", order.totalAmount)}", fontSize = 11.sp, color = RichBlack, fontWeight = FontWeight.Bold)
+                                    Text("Items amount", fontSize = 11.sp, color = MutedText)
+                                    Text("₹${String.format("%.2f", itemAmount)}", fontSize = 11.sp, color = RichBlack, fontWeight = FontWeight.Bold)
                                 }
                                 Spacer(modifier = Modifier.height(4.dp))
                                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
@@ -4276,9 +4316,14 @@ fun OrdersScreen(viewModel: BazaarViewModel) {
                                 }
                                 Spacer(modifier = Modifier.height(4.dp))
                                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                                    Text("Shipping & Eco Packaging", fontSize = 11.sp, color = MutedText)
-                                    Text("FREE", fontSize = 11.sp, color = DarkGreenPrimary, fontWeight = FontWeight.Bold)
+                                    Text("Delivery (${String.format("%.1f", deliveryDistanceKm)} km)", fontSize = 11.sp, color = MutedText)
+                                    Text("₹${String.format("%.2f", deliveryCharge.totalCharge)}", fontSize = 11.sp, color = DarkGreenPrimary, fontWeight = FontWeight.Bold)
                                 }
+                                Text(
+                                    text = "Fixed ₹${String.format("%.0f", deliveryCharge.fixedCharge)} + ₹${String.format("%.0f", deliveryCharge.perKmCharge)}/km",
+                                    fontSize = 10.sp,
+                                    color = MutedText
+                                )
                                 Divider(color = SoftGrey, modifier = Modifier.padding(vertical = 8.dp))
                                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                                     Text("Total Amount Paid", fontSize = 12.sp, fontWeight = FontWeight.Black, color = RichBlack)
@@ -4399,7 +4444,7 @@ fun OrderItemCard(
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable { onClick() },
+            .clickable { onClick() }
             .animateContentSize(animationSpec = tween(220, easing = FastOutSlowInEasing)),
         colors = CardDefaults.cardColors(containerColor = CustomWhite),
         elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
@@ -5329,7 +5374,10 @@ fun DirectBuyCheckoutDialog(
     val orderId = remember(product.id) { "ZVB-" + java.util.UUID.randomUUID().toString().uppercase().take(8) }
     val appliedCoupon = if (couponApplied) viewModel.validateCoupon(couponText) else null
     val discountAmount = product.price * ((appliedCoupon?.discountPercent ?: 0) / 100.0)
-    val finalAmount = product.price - discountAmount
+    val payableBeforeDelivery = (product.price - discountAmount).coerceAtLeast(0.0)
+    val deliveryDistanceKm = estimateDeliveryDistanceKm(orderId)
+    val deliveryCharge = calculateDeliveryCharge(payableBeforeDelivery, deliveryDistanceKm)
+    val finalAmount = payableBeforeDelivery + deliveryCharge.totalCharge
 
     LaunchedEffect(viewModel) {
         viewModel.checkoutSuccessEvent.collect {
@@ -5441,6 +5489,16 @@ fun DirectBuyCheckoutDialog(
                                         Text("-₹${String.format("%.2f", discountAmount)}", fontSize = 12.sp, color = DarkGreenPrimary)
                                     }
                                 }
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                    Text("Delivery (${String.format("%.1f", deliveryDistanceKm)} km)", fontSize = 12.sp, color = MutedText)
+                                    Text("+₹${String.format("%.2f", deliveryCharge.totalCharge)}", fontSize = 12.sp, color = DarkGreenPrimary, fontWeight = FontWeight.Bold)
+                                }
+                                Text(
+                                    text = "Fixed ₹${String.format("%.0f", deliveryCharge.fixedCharge)} + ₹${String.format("%.0f", deliveryCharge.perKmCharge)}/km",
+                                    fontSize = 10.sp,
+                                    color = MutedText
+                                )
                                 Divider(color = Color.LightGray, modifier = Modifier.padding(vertical = 6.dp))
                                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                                     Text("Total", fontWeight = FontWeight.Bold, color = RichBlack)
@@ -5467,6 +5525,11 @@ fun DirectBuyCheckoutDialog(
                                         coupon = if (couponApplied) couponText else "",
                                         addressLat = addressLat,
                                         addressLng = addressLng,
+                                        itemsAmount = payableBeforeDelivery,
+                                        deliveryDistanceKm = deliveryDistanceKm,
+                                        deliveryFixedCharge = deliveryCharge.fixedCharge,
+                                        deliveryPerKmCharge = deliveryCharge.perKmCharge,
+                                        deliveryCharge = deliveryCharge.totalCharge,
                                         clearCartAfterCheckout = false
                                     )
                                 )
@@ -5580,7 +5643,10 @@ fun ProductDetailPane(
     }
     val discountPercent = appliedCoupon?.discountPercent ?: 0
     val discountAmount = product.price * (discountPercent / 100.0)
-    val finalTotalAmount = product.price - discountAmount
+    val payableBeforeDelivery = (product.price - discountAmount).coerceAtLeast(0.0)
+    val deliveryDistanceKm = estimateDeliveryDistanceKm(directOrderId)
+    val deliveryCharge = calculateDeliveryCharge(payableBeforeDelivery, deliveryDistanceKm)
+    val finalTotalAmount = payableBeforeDelivery + deliveryCharge.totalCharge
 
     // Synchronize default values when user completes database syncing
     LaunchedEffect(user) {
@@ -6412,6 +6478,15 @@ fun ProductDetailPane(
                                             Text("-₹${String.format("%.2f", discountAmount)}", fontSize = 11.sp, color = DarkGreenPrimary, fontWeight = FontWeight.Bold)
                                         }
                                     }
+                                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                        Text("Delivery (${String.format("%.1f", deliveryDistanceKm)} km):", fontSize = 11.sp, color = MutedText)
+                                        Text("+₹${String.format("%.2f", deliveryCharge.totalCharge)}", fontSize = 11.sp, color = DarkGreenPrimary, fontWeight = FontWeight.Bold)
+                                    }
+                                    Text(
+                                        text = "Fixed ₹${String.format("%.0f", deliveryCharge.fixedCharge)} + ₹${String.format("%.0f", deliveryCharge.perKmCharge)}/km",
+                                        fontSize = 10.sp,
+                                        color = MutedText
+                                    )
                                     Divider(color = Color.LightGray, modifier = Modifier.padding(vertical = 4.dp))
                                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                                         Text("Total to Pay:", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = RichBlack)
@@ -6436,6 +6511,11 @@ fun ProductDetailPane(
                                                 coupon = if (isCouponApplied) couponText else "",
                                                 addressLat = tempAddressLat,
                                                 addressLng = tempAddressLng,
+                                                itemsAmount = payableBeforeDelivery,
+                                                deliveryDistanceKm = deliveryDistanceKm,
+                                                deliveryFixedCharge = deliveryCharge.fixedCharge,
+                                                deliveryPerKmCharge = deliveryCharge.perKmCharge,
+                                                deliveryCharge = deliveryCharge.totalCharge,
                                                 clearCartAfterCheckout = false
                                             )
                                         )
@@ -6794,19 +6874,19 @@ fun SellerPanelScreen(
                         emptyList()
                     }
                     val pendingCount = sellerOrders.count { 
-                        it.status == "Processing" || it.status == "Pending" || it.status.isBlank() || it.status == "Accepted" || it.status == "Seller Reject Requested"
+                        it.status == "Processing" || it.status == "Pending" || it.status.isBlank() || it.status == "Seller Reject Requested"
                     }
                     val readyCount = sellerOrders.count { 
-                        it.status == "Shipped" || it.status == "Ready to Deliver" || it.status == "Shipping Ready" || it.status == "On the Way" || it.status == "Delivery Take More Time" || it.status == "Ready for Delivery" || it.status == "Delivery Accepted"
+                        it.status == "Accepted" || it.status == "Shipped" || it.status == "Ready to Deliver" || it.status == "Shipping Ready" || it.status == "On the Way" || it.status == "Delivery Take More Time" || it.status == "Ready for Delivery" || it.status == "Delivery Accepted"
                     }
                     val successCount = sellerOrders.count { it.status == "Delivered" }
                     val cancelledCount = sellerOrders.count { it.status == "Cancelled" }
                     val filteredOrders = when (selectedStatusFilter) {
                         "Pending" -> sellerOrders.filter { 
-                            it.status == "Processing" || it.status == "Pending" || it.status.isBlank() || it.status == "Accepted" || it.status == "Seller Reject Requested"
+                            it.status == "Processing" || it.status == "Pending" || it.status.isBlank() || it.status == "Seller Reject Requested"
                         }
                         "Ready to Deliver" -> sellerOrders.filter { 
-                            it.status == "Shipped" || it.status == "Ready to Deliver" || it.status == "Shipping Ready" || it.status == "On the Way" || it.status == "Delivery Take More Time" || it.status == "Ready for Delivery" || it.status == "Delivery Accepted"
+                            it.status == "Accepted" || it.status == "Shipped" || it.status == "Ready to Deliver" || it.status == "Shipping Ready" || it.status == "On the Way" || it.status == "Delivery Take More Time" || it.status == "Ready for Delivery" || it.status == "Delivery Accepted"
                         }
                         "Delivered" -> sellerOrders.filter { it.status == "Delivered" }
                         "Cancelled" -> sellerOrders.filter { it.status == "Cancelled" }
@@ -7118,7 +7198,7 @@ fun SellerPanelScreen(
                                             val statusColor = when (order.status) {
                                                 "Delivered" -> DarkGreenPrimary
                                                 "Cancelled" -> AccentRed
-                                                "Shipped", "Ready to Deliver" -> Color(0xFF1976D2)
+                                                "Accepted", "Shipping Ready", "Ready for Delivery", "Delivery Accepted", "Shipped", "Ready to Deliver", "On the Way" -> Color(0xFF1976D2)
                                                 else -> Color(0xFFF57C00)
                                             }
                                             Card(
@@ -7229,8 +7309,8 @@ fun SellerPanelScreen(
                                                 if (order.status == "Processing" || order.status == "Pending" || order.status.isBlank()) {
                                                     Button(
                                                         onClick = {
-                                                            viewModel.updateOrderStatus(order.orderId, "Accepted")
-                                                            Toast.makeText(context, "Order ${order.orderId} accepted! Sent to Delivery Partners.", Toast.LENGTH_SHORT).show()
+                                                            viewModel.confirmOrderReady(order.orderId)
+                                                            Toast.makeText(context, "Order ${order.orderId} accepted. Shipping ready and sent to delivery partners.", Toast.LENGTH_SHORT).show()
                                                         },
                                                         colors = ButtonDefaults.buttonColors(containerColor = DarkGreenPrimary),
                                                         shape = RoundedCornerShape(8.dp),
@@ -7241,7 +7321,7 @@ fun SellerPanelScreen(
                                                     }
                                                 }
 
-                                                if (order.status == "Accepted") {
+                                                if (order.status == "Shipping Ready" && order.deliveryPartnerEmail.isBlank()) {
                                                     Box(
                                                         modifier = Modifier
                                                             .background(Color(0xFFFFF3E0), shape = RoundedCornerShape(6.dp))
@@ -7256,18 +7336,18 @@ fun SellerPanelScreen(
                                                     }
                                                 }
 
-                                                if (order.status == "Shipped" || order.status == "Ready to Deliver" || order.status == "Shipping Ready" || order.status == "On the Way") {
-                                                    Button(
-                                                        onClick = {
-                                                            viewModel.updateOrderStatus(order.orderId, "Delivered")
-                                                            Toast.makeText(context, "Order ${order.orderId} marked as DELIVERED", Toast.LENGTH_SHORT).show()
-                                                        },
-                                                        colors = ButtonDefaults.buttonColors(containerColor = DarkGreenPrimary),
-                                                        shape = RoundedCornerShape(8.dp),
-                                                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
-                                                        modifier = Modifier.height(34.dp)
+                                                if (order.status == "Delivery Accepted" || order.deliveryPartnerEmail.isNotBlank()) {
+                                                    Box(
+                                                        modifier = Modifier
+                                                            .background(LightGreenSecondary, shape = RoundedCornerShape(6.dp))
+                                                            .padding(horizontal = 8.dp, vertical = 6.dp)
                                                     ) {
-                                                        Text("Mark Delivered", fontSize = 10.sp, color = CustomWhite)
+                                                        Text(
+                                                            text = "Delivery partner assigned. Customer sees Shipping Ready until pickup starts.",
+                                                            color = DarkGreenPrimary,
+                                                            fontSize = 10.sp,
+                                                            fontWeight = FontWeight.Bold
+                                                        )
                                                     }
                                                 }
 

@@ -27,6 +27,9 @@ import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.example.data.Order
 import com.example.data.User
+import com.example.data.calculateDeliveryCharge
+import com.example.data.estimateDeliveryDistanceKm
+import com.example.data.estimateItemAmountFromOrderTotal
 import com.example.ui.theme.*
 import com.example.viewmodel.BazaarViewModel
 
@@ -44,15 +47,19 @@ fun DeliveryPartnerPanelScreen(viewModel: BazaarViewModel, onLogout: () -> Unit)
     val myOrders = allOrders.filter { it.deliveryPartnerEmail == currentUser?.email }
     
     val todayDelivered = myOrders.count { it.deliveryStatus == "Delivered" || it.status == "Delivered" }
-    val todayPending = myOrders.count { (it.deliveryStatus == "On the Way" || it.deliveryStatus == "Delivery Take More Time") && it.status != "Delivered" && it.status != "Cancelled" }
+    val todayPending = myOrders.count {
+        (it.deliveryStatus == "Shipping Ready" || it.deliveryStatus == "On the Way" || it.deliveryStatus == "Delivery Take More Time") &&
+            it.status != "Delivered" &&
+            it.status != "Cancelled"
+    }
     val todayCanceled = myOrders.count { it.status == "Cancelled" }
 
-    // Order Requests (Orders that are ready or processing and do NOT have a delivery boy assigned yet)
+    // Order Requests: seller accepted orders remain open to all delivery partners for 24 hours.
     val availableRequests = allOrders.filter { 
         it.deliveryPartnerEmail.isBlank() && 
         it.status != "Cancelled" && 
         it.status != "Delivered" &&
-        (it.status == "Accepted" || it.sellerConfirmed) &&
+        (it.status == "Shipping Ready" || it.status == "Ready for Delivery" || it.status == "Accepted" || it.sellerConfirmed) &&
         (System.currentTimeMillis() - it.orderDate) <= 24 * 60 * 60 * 1000
     }
 
@@ -442,19 +449,12 @@ fun DeliveryPartnerPanelScreen(viewModel: BazaarViewModel, onLogout: () -> Unit)
                         val withdrawRequests by viewModel.withdrawRequests.collectAsState()
                         val deliveredOrders = myOrders.filter { it.deliveryStatus == "Delivered" || it.status == "Delivered" }
                         
-                        fun getOrderDistanceKm(orderId: String): Double {
-                            val code = orderId.hashCode()
-                            val absCode = if (code == Int.MIN_VALUE) 0 else kotlin.math.abs(code)
-                            return 1.0 + (absCode % 71) / 10.0 // 1.0 to 8.0 KM
-                        }
-
                         fun calculateOrderEarning(order: com.example.data.Order): Double {
-                            val distance = getOrderDistanceKm(order.orderId)
-                            return if (order.totalAmount < 500.0) {
-                                80.0 + (distance * 15.0)
-                            } else {
-                                150.0 + (distance * 20.0)
-                            }
+                            val distance = estimateDeliveryDistanceKm(order.orderId)
+                            val itemAmount = order.itemsAmount.takeIf { it > 0.0 }
+                                ?: estimateItemAmountFromOrderTotal(order.totalAmount, distance)
+                            return order.deliveryCharge.takeIf { it > 0.0 }
+                                ?: calculateDeliveryCharge(itemAmount, distance).totalCharge
                         }
                         
                         val totalEarnings = deliveredOrders.sumOf { calculateOrderEarning(it) }
@@ -628,7 +628,7 @@ fun DeliveryPartnerPanelScreen(viewModel: BazaarViewModel, onLogout: () -> Unit)
                             } else {
                                 deliveredOrders.forEach { order ->
                                     val earn = calculateOrderEarning(order)
-                                    val dist = getOrderDistanceKm(order.orderId)
+                                    val dist = order.deliveryDistanceKm.takeIf { it > 0.0 } ?: estimateDeliveryDistanceKm(order.orderId)
                                     Card(
                                         modifier = Modifier.fillMaxWidth(),
                                         colors = CardDefaults.cardColors(containerColor = CustomWhite),
@@ -1018,6 +1018,21 @@ fun OrderRequestCard(
     onAccept: () -> Unit,
     onReject: () -> Unit
 ) {
+    val fallbackDistanceKm = estimateDeliveryDistanceKm(order.orderId)
+    val deliveryDistanceKm = order.deliveryDistanceKm.takeIf { it > 0.0 } ?: fallbackDistanceKm
+    val itemAmount = order.itemsAmount.takeIf { it > 0.0 }
+        ?: estimateItemAmountFromOrderTotal(order.totalAmount, fallbackDistanceKm)
+    val deliveryCharge = if (order.deliveryCharge > 0.0) {
+        com.example.data.DeliveryChargeBreakdown(
+            distanceKm = deliveryDistanceKm,
+            fixedCharge = order.deliveryFixedCharge,
+            perKmCharge = order.deliveryPerKmCharge,
+            totalCharge = order.deliveryCharge
+        )
+    } else {
+        calculateDeliveryCharge(itemAmount, deliveryDistanceKm)
+    }
+
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(containerColor = CustomWhite),
@@ -1074,13 +1089,18 @@ fun OrderRequestCard(
                         .padding(horizontal = 8.dp, vertical = 4.dp)
                 ) {
                     Text(
-                        text = "Offer: ₹${String.format("%.2f", order.totalAmount)}",
+                        text = "Earn ₹${String.format("%.2f", deliveryCharge.totalCharge)}",
                         fontWeight = FontWeight.Bold,
                         color = DarkGreenPrimary,
                         fontSize = 11.sp
                     )
                 }
             }
+            Text(
+                text = "Delivery ${String.format("%.1f", deliveryDistanceKm)} km: fixed ₹${String.format("%.0f", deliveryCharge.fixedCharge)} + ₹${String.format("%.0f", deliveryCharge.perKmCharge)}/km",
+                fontSize = 10.sp,
+                color = MutedText
+            )
 
             Spacer(modifier = Modifier.height(10.dp))
             Divider(color = SoftGrey)
@@ -1225,6 +1245,21 @@ fun ActiveOrderControlCard(
     seller: User?,
     onUpdateStatus: (String) -> Unit
 ) {
+    val fallbackDistanceKm = estimateDeliveryDistanceKm(order.orderId)
+    val deliveryDistanceKm = order.deliveryDistanceKm.takeIf { it > 0.0 } ?: fallbackDistanceKm
+    val itemAmount = order.itemsAmount.takeIf { it > 0.0 }
+        ?: estimateItemAmountFromOrderTotal(order.totalAmount, fallbackDistanceKm)
+    val deliveryCharge = if (order.deliveryCharge > 0.0) {
+        com.example.data.DeliveryChargeBreakdown(
+            distanceKm = deliveryDistanceKm,
+            fixedCharge = order.deliveryFixedCharge,
+            perKmCharge = order.deliveryPerKmCharge,
+            totalCharge = order.deliveryCharge
+        )
+    } else {
+        calculateDeliveryCharge(itemAmount, deliveryDistanceKm)
+    }
+
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(containerColor = CustomWhite),
@@ -1246,7 +1281,7 @@ fun ActiveOrderControlCard(
                         color = RichBlack
                     )
                     Text(
-                        text = "Current Status: ${order.deliveryStatus.ifBlank { "Accepted" }}",
+                        text = "Current Status: ${order.deliveryStatus.ifBlank { "Shipping Ready" }}",
                         color = DarkGreenPrimary,
                         fontSize = 11.sp,
                         fontWeight = FontWeight.Bold
@@ -1258,13 +1293,18 @@ fun ActiveOrderControlCard(
                         .padding(horizontal = 8.dp, vertical = 4.dp)
                 ) {
                     Text(
-                        text = "₹${String.format("%.2f", order.totalAmount)}",
+                        text = "Earn ₹${String.format("%.2f", deliveryCharge.totalCharge)}",
                         fontWeight = FontWeight.Bold,
                         color = DarkGreenPrimary,
                         fontSize = 12.sp
                     )
                 }
             }
+            Text(
+                text = "Delivery ${String.format("%.1f", deliveryDistanceKm)} km: fixed ₹${String.format("%.0f", deliveryCharge.fixedCharge)} + ₹${String.format("%.0f", deliveryCharge.perKmCharge)}/km",
+                color = MutedText,
+                fontSize = 10.sp
+            )
 
             Spacer(modifier = Modifier.height(10.dp))
             Divider(color = SoftGrey)
@@ -1393,6 +1433,7 @@ fun ActiveOrderControlCard(
                 // Delivered Button (Delivering final status)
                 Button(
                     onClick = { onUpdateStatus("Delivered") },
+                    enabled = order.deliveryStatus == "On the Way" || order.deliveryStatus == "Delivery Take More Time",
                     colors = ButtonDefaults.buttonColors(containerColor = DarkGreenPrimary),
                     shape = RoundedCornerShape(8.dp),
                     modifier = Modifier
