@@ -205,7 +205,8 @@ data class PendingCheckout(
     val summary: String,
     val orderId: String,
     val address: String,
-    val coupon: String
+    val coupon: String,
+    val clearCartAfterCheckout: Boolean = true
 )
 
 sealed class AuthState {
@@ -901,9 +902,13 @@ class BazaarViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     // --- Profile & Account Settings Actions ---
-    fun updateProfile(name: String, email: String, phone: String, gender: String) {
+    fun updateProfile(name: String, phone: String, gender: String) {
         val current = _currentUser.value ?: return
-        val updated = current.copy(name = name, phone = phone, gender = gender)
+        val updated = current.copy(
+            name = name.trim(),
+            phone = phone.trim(),
+            gender = gender
+        )
         saveUser(updated)
     }
 
@@ -915,13 +920,13 @@ class BazaarViewModel(application: Application) : AndroidViewModel(application) 
 
     fun updateAddress(address: String) {
         val current = _currentUser.value ?: return
-        val updated = current.copy(savedAddress = address)
+        val updated = current.copy(savedAddress = address.trim())
         saveUser(updated)
     }
 
     fun updateCards(card: String) {
         val current = _currentUser.value ?: return
-        val updated = current.copy(savedCards = card)
+        val updated = current.copy(savedCards = card.trim())
         saveUser(updated)
     }
 
@@ -934,6 +939,12 @@ class BazaarViewModel(application: Application) : AndroidViewModel(application) 
     fun toggleNotifications(enabled: Boolean) {
         val current = _currentUser.value ?: return
         val updated = current.copy(notificationsEnabled = enabled)
+        saveUser(updated)
+    }
+
+    fun updatePrivacyAccepted(accepted: Boolean) {
+        val current = _currentUser.value ?: return
+        val updated = current.copy(privacyAccepted = accepted)
         saveUser(updated)
     }
 
@@ -1036,7 +1047,8 @@ class BazaarViewModel(application: Application) : AndroidViewModel(application) 
         summary: String,
         customOrderId: String = "",
         deliveryAddress: String = "",
-        couponApplied: String = ""
+        couponApplied: String = "",
+        clearCartAfterCheckout: Boolean = true
     ) {
         val user = _currentUser.value ?: return
         viewModelScope.launch {
@@ -1052,7 +1064,9 @@ class BazaarViewModel(application: Application) : AndroidViewModel(application) 
                 couponApplied = couponApplied
             )
             repository.insertOrder(newOrder)
-            repository.clearCart(user.email)
+            if (clearCartAfterCheckout) {
+                repository.clearCart(user.email)
+            }
             try {
                 FirebaseFirestore.getInstance().collection("orders")
                     .document(orderId)
@@ -1075,6 +1089,12 @@ class BazaarViewModel(application: Application) : AndroidViewModel(application) 
     ) {
         viewModelScope.launch {
             val id = (System.currentTimeMillis() % 10000000).toInt()
+            val imageUrls = extraImages
+                .split(",")
+                .map { it.trim() }
+                .filter { it.isNotBlank() }
+            val primaryImage = imageUrls.firstOrNull().orEmpty()
+            val secondaryImages = imageUrls.drop(1).joinToString(",")
             val newProd = Product(
                 id = id,
                 name = name,
@@ -1082,11 +1102,11 @@ class BazaarViewModel(application: Application) : AndroidViewModel(application) 
                 originalPrice = originalPrice,
                 rating = 4.5f + (Math.random() * 0.5).toFloat(),
                 category = category,
-                imageUrlName = "",
+                imageUrlName = primaryImage,
                 description = description,
                 isFeatured = false,
                 sellerEmail = sellerEmail,
-                extraImages = extraImages
+                extraImages = secondaryImages
             )
             repository.insertProduct(newProd)
             try {

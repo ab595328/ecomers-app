@@ -1648,7 +1648,40 @@ fun MainScreen(
 ) {
     var selectedTab by remember { mutableStateOf(BottomTab.Home) }
     val user by viewModel.currentUser.collectAsState()
+    val context = LocalContext.current
     var showProductDetail by remember { mutableStateOf<Product?>(null) }
+    var directBuyProduct by remember { mutableStateOf<Product?>(null) }
+
+    LaunchedEffect(activity) {
+        activity?.razorpayResult?.collect { result ->
+            when (result) {
+                is com.example.RazorpayResult.Success -> {
+                    val pending = viewModel.pendingCheckout.value
+                    if (pending != null) {
+                        viewModel.checkout(
+                            totalAmount = pending.totalAmount,
+                            summary = pending.summary,
+                            customOrderId = pending.orderId,
+                            deliveryAddress = pending.address,
+                            couponApplied = pending.coupon,
+                            clearCartAfterCheckout = pending.clearCartAfterCheckout
+                        )
+                        viewModel.notifyCheckoutSuccess()
+                        viewModel.clearPendingCheckout()
+                    }
+                }
+                is com.example.RazorpayResult.Error -> {
+                    val msg = if (result.code == 0 || result.description.contains("cancel", ignoreCase = true)) {
+                        "Payment Cancelled"
+                    } else {
+                        "Payment Failed. Please try again."
+                    }
+                    Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
+                    viewModel.clearPendingCheckout()
+                }
+            }
+        }
+    }
 
     Scaffold(
         bottomBar = {
@@ -1716,13 +1749,34 @@ fun MainScreen(
                 )
             } else {
                 when (selectedTab) {
-                    BottomTab.Home -> HomeScreen(viewModel = viewModel, onProductSelect = { showProductDetail = it })
-                    BottomTab.Categories -> CategoriesScreen(viewModel = viewModel, onProductSelect = { showProductDetail = it })
+                    BottomTab.Home -> HomeScreen(
+                        viewModel = viewModel,
+                        onProductSelect = { showProductDetail = it },
+                        onProductBuy = { directBuyProduct = it }
+                    )
+                    BottomTab.Categories -> CategoriesScreen(
+                        viewModel = viewModel,
+                        onProductSelect = { showProductDetail = it },
+                        onProductBuy = { directBuyProduct = it }
+                    )
                     BottomTab.Cart -> CartScreen(viewModel = viewModel, activity = activity, onBackToShopping = { selectedTab = BottomTab.Home })
-                    BottomTab.Wishlist -> WishlistScreen(viewModel = viewModel, onProductSelect = { showProductDetail = it })
+                    BottomTab.Wishlist -> WishlistScreen(
+                        viewModel = viewModel,
+                        onProductSelect = { showProductDetail = it },
+                        onProductBuy = { directBuyProduct = it }
+                    )
                     BottomTab.Orders -> OrdersScreen(viewModel = viewModel)
                     BottomTab.Profile -> ProfileScreen(viewModel = viewModel, onLogout = onLogout)
                 }
+            }
+
+            directBuyProduct?.let { product ->
+                DirectBuyCheckoutDialog(
+                    product = product,
+                    viewModel = viewModel,
+                    activity = activity,
+                    onDismiss = { directBuyProduct = null }
+                )
             }
         }
     }
@@ -1764,7 +1818,8 @@ private suspend fun getLocationText(context: android.content.Context): String {
 @Composable
 fun HomeScreen(
     viewModel: BazaarViewModel,
-    onProductSelect: (Product) -> Unit
+    onProductSelect: (Product) -> Unit,
+    onProductBuy: (Product) -> Unit
 ) {
     val user by viewModel.currentUser.collectAsState()
     val searchQuery by viewModel.searchQuery.collectAsState()
@@ -2428,6 +2483,7 @@ fun HomeScreen(
                                         snackbarHostState.showSnackbar("✅ ${prod.name} added to cart!")
                                     }
                                 },
+                                onCallBuyNow = { onProductBuy(prod) },
                                 onCallWishlistToggle = { viewModel.toggleWishlist(prod) },
                                 isWishlisted = viewModel.isWishlisted(prod.id),
                                 cartQuantity = cartItem?.quantity ?: 0,
@@ -2510,17 +2566,29 @@ fun HomeScreen(
 }
 
 // 2-Column Product Card
+fun Product.primaryPhotoUrl(): String {
+    if (imageUrlName.isNotBlank()) return imageUrlName
+    return extraImages
+        .split(",")
+        .map { it.trim() }
+        .firstOrNull { it.isNotBlank() }
+        .orEmpty()
+}
+
 @Composable
 fun ProductItemCard(
     product: Product,
     onCallSelect: () -> Unit,
     onCallAddToCart: () -> Unit,
+    onCallBuyNow: () -> Unit,
     onCallWishlistToggle: () -> Unit,
     isWishlisted: Boolean,
     cartQuantity: Int = 0,
     onIncrement: () -> Unit = {},
     onDecrement: () -> Unit = {}
 ) {
+    val primaryPhotoUrl = product.primaryPhotoUrl()
+
     Card(
         modifier = Modifier
             .fillMaxWidth()
@@ -2537,9 +2605,9 @@ fun ProductItemCard(
                 .background(SoftGrey)
         ) {
             // Display actual product photo if available, fallback to default banner or category-specific visual icon
-            if (product.imageUrlName.isNotBlank()) {
+            if (primaryPhotoUrl.isNotBlank()) {
                 AsyncImage(
-                    model = product.imageUrlName,
+                    model = primaryPhotoUrl,
                     contentDescription = product.name,
                     modifier = Modifier.fillMaxSize(),
                     contentScale = ContentScale.Crop,
@@ -2733,6 +2801,31 @@ fun ProductItemCard(
                     )
                 }
             }
+
+            Spacer(modifier = Modifier.height(6.dp))
+
+            OutlinedButton(
+                onClick = onCallBuyNow,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(34.dp)
+                    .testTag("product_buy_now_${product.id}"),
+                border = BorderStroke(1.dp, DarkGreenPrimary),
+                colors = ButtonDefaults.outlinedButtonColors(contentColor = DarkGreenPrimary),
+                shape = RoundedCornerShape(6.dp),
+                contentPadding = PaddingValues(horizontal = 4.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.OfflineBolt,
+                    contentDescription = "Buy Now",
+                    modifier = Modifier.size(15.dp)
+                )
+                Spacer(modifier = Modifier.width(4.dp))
+                Text(
+                    text = "Buy Now",
+                    style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Bold)
+                )
+            }
         }
     }
 }
@@ -2743,7 +2836,8 @@ fun ProductItemCard(
 @Composable
 fun CategoriesScreen(
     viewModel: BazaarViewModel,
-    onProductSelect: (Product) -> Unit
+    onProductSelect: (Product) -> Unit,
+    onProductBuy: (Product) -> Unit
 ) {
     val selectedCat by viewModel.selectedCategory.collectAsState()
     val products by viewModel.filteredProducts.collectAsState(initial = emptyList())
@@ -2876,6 +2970,7 @@ fun CategoriesScreen(
                                     snackbarHostState.showSnackbar("✅ ${prod.name} added to cart!")
                                 }
                             },
+                            onCallBuyNow = { onProductBuy(prod) },
                             onCallWishlistToggle = { viewModel.toggleWishlist(prod) },
                             isWishlisted = viewModel.isWishlisted(prod.id),
                             cartQuantity = cartItem?.quantity ?: 0,
@@ -2972,51 +3067,6 @@ fun CartScreen(
     val discountPercent = appliedCoupon?.discountPercent ?: 0
     val cartDiscountAmount = grandTotal * (discountPercent / 100.0)
     val cartFinalTotal = grandTotal - cartDiscountAmount
-
-    val currentPerformCheckout = rememberUpdatedState {
-        val summary = computedItems.joinToString(", ") { "${it.second.name} x${it.first.quantity}" }
-        viewModel.checkout(
-            totalAmount = cartFinalTotal,
-            summary = summary,
-            customOrderId = generatedCartOrderId,
-            deliveryAddress = cartTempAddress,
-            couponApplied = if (cartIsCouponApplied) cartCouponText else ""
-        )
-    }
-
-    // Collect Razorpay payment results from MainActivity
-    LaunchedEffect(activity) {
-        activity?.razorpayResult?.collect { result ->
-            when (result) {
-                is com.example.RazorpayResult.Success -> {
-                    val pending = viewModel.pendingCheckout.value
-                    if (pending != null) {
-                        viewModel.checkout(
-                            totalAmount = pending.totalAmount,
-                            summary = pending.summary,
-                            customOrderId = pending.orderId,
-                            deliveryAddress = pending.address,
-                            couponApplied = pending.coupon
-                        )
-                        viewModel.notifyCheckoutSuccess()
-                        viewModel.clearPendingCheckout()
-                    } else {
-                        currentPerformCheckout.value.invoke()
-                        cartCheckoutStep = 3
-                        showCartCheckoutDialog = true
-                    }
-                }
-                is com.example.RazorpayResult.Error -> {
-                    val msg = if (result.code == 0 || result.description.contains("cancel", ignoreCase = true)) {
-                        "Payment Cancelled"
-                    } else {
-                        "Payment Failed. Please try again."
-                    }
-                    snackbarHostState.showSnackbar(msg)
-                }
-            }
-        }
-    }
 
     Box(modifier = Modifier.fillMaxSize()) {
     Column(
@@ -3354,6 +3404,7 @@ fun CartScreen(
                                             }
                                             checkout.open(act, options)
                                         } catch (e: Exception) {
+                                            viewModel.clearPendingCheckout()
                                             coroutineScope.launch {
                                                 snackbarHostState.showSnackbar("Could not open payment: ${e.message}")
                                             }
@@ -3468,6 +3519,8 @@ fun CartItemRow(
     onDecrease: () -> Unit,
     onRemove: () -> Unit
 ) {
+    val primaryPhotoUrl = product.primaryPhotoUrl()
+
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(containerColor = CustomWhite),
@@ -3487,9 +3540,9 @@ fun CartItemRow(
                     .background(LightGreenSecondary),
                 contentAlignment = Alignment.Center
             ) {
-                if (product.imageUrlName.isNotBlank()) {
+                if (primaryPhotoUrl.isNotBlank()) {
                     AsyncImage(
-                        model = product.imageUrlName,
+                        model = primaryPhotoUrl,
                         contentDescription = product.name,
                         modifier = Modifier.fillMaxSize(),
                         contentScale = ContentScale.Crop,
@@ -3578,7 +3631,8 @@ fun CartItemRow(
 @Composable
 fun WishlistScreen(
     viewModel: BazaarViewModel,
-    onProductSelect: (Product) -> Unit
+    onProductSelect: (Product) -> Unit,
+    onProductBuy: (Product) -> Unit
 ) {
     val wishlist by viewModel.currentWishlist.collectAsState()
     val allProducts by viewModel.allProducts.collectAsState()
@@ -3641,6 +3695,7 @@ fun WishlistScreen(
                         product = prod,
                         onCallSelect = { onProductSelect(prod) },
                         onCallAddToCart = { viewModel.addToCart(prod) },
+                        onCallBuyNow = { onProductBuy(prod) },
                         onCallWishlistToggle = { viewModel.toggleWishlist(prod) },
                         isWishlisted = true
                     )
@@ -4141,6 +4196,7 @@ fun ProfileScreen(
     onLogout: () -> Unit
 ) {
     val user by viewModel.currentUser.collectAsState()
+    val languages by viewModel.languages.collectAsState()
     val context = LocalContext.current
 
     // Dialog state controllers
@@ -4409,7 +4465,7 @@ fun ProfileScreen(
             ProfileInteractiveRow(
                 icon = Icons.Default.Security,
                 title = "Privacy Center >",
-                description = "GDPR directives, credential options, logs",
+                description = if (user?.privacyAccepted == true) "Privacy terms accepted for this account" else "Review and accept privacy terms",
                 onClick = { showPrivacy = true }
             )
         }
@@ -4459,9 +4515,9 @@ fun ProfileScreen(
 
     // --- Sub-Dialog Popup: Edit Profile Info ---
     if (showEditProfile) {
-        var tempName by remember { mutableStateOf(user?.name ?: "") }
-        var tempPhone by remember { mutableStateOf(user?.phone ?: "") }
-        var tempGender by remember { mutableStateOf(user?.gender ?: "Male") }
+        var tempName by remember(showEditProfile, user?.email) { mutableStateOf(user?.name ?: "") }
+        var tempPhone by remember(showEditProfile, user?.email) { mutableStateOf(user?.phone ?: "") }
+        var tempGender by remember(showEditProfile, user?.email) { mutableStateOf(user?.gender?.ifBlank { "Male" } ?: "Male") }
 
         Dialog(onDismissRequest = { showEditProfile = false }) {
             Surface(
@@ -4486,6 +4542,20 @@ fun ProfileScreen(
                             unfocusedBorderColor = MutedText,
                             focusedTextColor = RichBlack,
                             unfocusedTextColor = RichBlack
+                        )
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    OutlinedTextField(
+                        value = user?.email ?: "",
+                        onValueChange = {},
+                        enabled = false,
+                        label = { Text("Email") },
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            disabledBorderColor = SoftGrey,
+                            disabledTextColor = MutedText,
+                            disabledLabelColor = MutedText
                         )
                     )
                     Spacer(modifier = Modifier.height(12.dp))
@@ -4549,9 +4619,13 @@ fun ProfileScreen(
                         Spacer(modifier = Modifier.width(10.dp))
                         Button(
                             onClick = {
-                                viewModel.updateProfile(tempName, user?.email ?: "", tempPhone, tempGender)
-                                showEditProfile = false
-                                Toast.makeText(context, "Identity Profile Updated", Toast.LENGTH_SHORT).show()
+                                if (tempName.isBlank()) {
+                                    Toast.makeText(context, "Please enter your full name", Toast.LENGTH_SHORT).show()
+                                } else {
+                                    viewModel.updateProfile(tempName, tempPhone, tempGender)
+                                    showEditProfile = false
+                                    Toast.makeText(context, "Identity Profile Updated", Toast.LENGTH_SHORT).show()
+                                }
                             },
                             colors = ButtonDefaults.buttonColors(containerColor = DarkGreenPrimary)
                         ) {
@@ -4676,7 +4750,7 @@ fun ProfileScreen(
 
     // --- Sub-Dialog Popup: Saved Credit / Debit Cards ---
     if (showCards) {
-        var cardTemp by remember { mutableStateOf(user?.savedCards ?: "") }
+        var cardTemp by remember(showCards, user?.savedCards) { mutableStateOf(user?.savedCards ?: "") }
         Dialog(onDismissRequest = { showCards = false }) {
             Surface(
                 shape = RoundedCornerShape(16.dp),
@@ -4696,6 +4770,15 @@ fun ProfileScreen(
                     )
                     Spacer(modifier = Modifier.height(24.dp))
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                        TextButton(
+                            onClick = {
+                                viewModel.updateCards("")
+                                cardTemp = ""
+                                Toast.makeText(context, "Saved payment method removed", Toast.LENGTH_SHORT).show()
+                            },
+                            enabled = cardTemp.isNotBlank()
+                        ) { Text("Remove", color = AccentRed) }
+                        Spacer(modifier = Modifier.width(10.dp))
                         TextButton(onClick = { showCards = false }) { Text("Close") }
                         Spacer(modifier = Modifier.width(10.dp))
                         Button(
@@ -4716,7 +4799,7 @@ fun ProfileScreen(
 
     // --- Sub-Dialog Popup: Saved Addresses ---
     if (showAddresses) {
-        var addrTemp by remember { mutableStateOf(user?.savedAddress ?: "") }
+        var addrTemp by remember(showAddresses, user?.savedAddress) { mutableStateOf(user?.savedAddress ?: "") }
         Dialog(onDismissRequest = { showAddresses = false }) {
             Surface(
                 shape = RoundedCornerShape(16.dp),
@@ -4734,6 +4817,15 @@ fun ProfileScreen(
                     )
                     Spacer(modifier = Modifier.height(24.dp))
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                        TextButton(
+                            onClick = {
+                                viewModel.updateAddress("")
+                                addrTemp = ""
+                                Toast.makeText(context, "Delivery address removed", Toast.LENGTH_SHORT).show()
+                            },
+                            enabled = addrTemp.isNotBlank()
+                        ) { Text("Remove", color = AccentRed) }
+                        Spacer(modifier = Modifier.width(10.dp))
                         TextButton(onClick = { showAddresses = false }) { Text("Cancel") }
                         Spacer(modifier = Modifier.width(10.dp))
                         Button(
@@ -4754,7 +4846,7 @@ fun ProfileScreen(
 
     // --- Sub-Dialog Popup: Language Selection ---
     if (showLanguage) {
-        val list = listOf("English", "Español", "Français", "Deutsch", "Hindi", "Bengali")
+        val list = languages.ifEmpty { listOf("English", "Español", "Français", "Deutsch", "Hindi", "Bengali") }
         Dialog(onDismissRequest = { showLanguage = false }) {
             Surface(
                 shape = RoundedCornerShape(16.dp),
@@ -4792,6 +4884,7 @@ fun ProfileScreen(
 
     // --- Sub-Dialog Popup: Privacy Center ---
     if (showPrivacy) {
+        var accepted by remember(showPrivacy, user?.privacyAccepted) { mutableStateOf(user?.privacyAccepted ?: false) }
         Dialog(onDismissRequest = { showPrivacy = false }) {
             Surface(
                 shape = RoundedCornerShape(16.dp),
@@ -4814,12 +4907,41 @@ fun ProfileScreen(
                         color = RichBlack
                     )
                     Spacer(modifier = Modifier.height(24.dp))
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { accepted = !accepted }
+                            .padding(vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Checkbox(
+                            checked = accepted,
+                            onCheckedChange = { accepted = it },
+                            colors = CheckboxDefaults.colors(checkedColor = DarkGreenPrimary)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "I accept the privacy terms for this account.",
+                            fontSize = 13.sp,
+                            color = RichBlack,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(16.dp))
                     Button(
-                        onClick = { showPrivacy = false },
+                        onClick = {
+                            viewModel.updatePrivacyAccepted(accepted)
+                            showPrivacy = false
+                            Toast.makeText(
+                                context,
+                                if (accepted) "Privacy preferences accepted" else "Privacy acceptance removed",
+                                Toast.LENGTH_SHORT
+                            ).show()
+                        },
                         modifier = Modifier.fillMaxWidth(),
                         colors = ButtonDefaults.buttonColors(containerColor = DarkGreenPrimary)
                     ) {
-                        Text("Accept & Secure App State")
+                        Text(if (accepted) "Save Privacy Preference" else "Save Without Acceptance")
                     }
                 }
             }
@@ -4882,6 +5004,211 @@ fun ProfileInteractiveRow(
                 tint = MutedText,
                 modifier = Modifier.size(18.dp)
             )
+        }
+    }
+}
+
+@Composable
+fun DirectBuyCheckoutDialog(
+    product: Product,
+    viewModel: BazaarViewModel,
+    activity: MainActivity?,
+    onDismiss: () -> Unit
+) {
+    val context = LocalContext.current
+    val user by viewModel.currentUser.collectAsState()
+    var step by remember(product.id) { mutableStateOf(1) }
+    var address by remember(product.id, user?.savedAddress) { mutableStateOf(user?.savedAddress ?: "") }
+    var couponText by remember(product.id) { mutableStateOf("") }
+    var couponApplied by remember(product.id) { mutableStateOf(false) }
+    val orderId = remember(product.id) { "ZVB-" + java.util.UUID.randomUUID().toString().uppercase().take(8) }
+    val appliedCoupon = if (couponApplied) viewModel.validateCoupon(couponText) else null
+    val discountAmount = product.price * ((appliedCoupon?.discountPercent ?: 0) / 100.0)
+    val finalAmount = product.price - discountAmount
+
+    LaunchedEffect(viewModel) {
+        viewModel.checkoutSuccessEvent.collect {
+            step = 3
+        }
+    }
+
+    Dialog(onDismissRequest = onDismiss) {
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 12.dp),
+            shape = RoundedCornerShape(16.dp),
+            color = CustomWhite,
+            tonalElevation = 8.dp
+        ) {
+            Column(modifier = Modifier.padding(20.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("Buy Now", fontWeight = FontWeight.Black, style = MaterialTheme.typography.titleMedium, color = DarkGreenPrimary)
+                    IconButton(onClick = onDismiss) {
+                        Icon(Icons.Default.Close, contentDescription = "Close", tint = RichBlack)
+                    }
+                }
+
+                Text(product.name, fontSize = 12.sp, color = MutedText, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Spacer(modifier = Modifier.height(14.dp))
+
+                when (step) {
+                    1 -> {
+                        Text("Confirm Delivery Address", fontWeight = FontWeight.Bold, color = RichBlack)
+                        Spacer(modifier = Modifier.height(10.dp))
+                        OutlinedTextField(
+                            value = address,
+                            onValueChange = { address = it },
+                            label = { Text("Delivery Address") },
+                            modifier = Modifier.fillMaxWidth(),
+                            minLines = 2,
+                            maxLines = 3,
+                            colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = DarkGreenPrimary)
+                        )
+                        Spacer(modifier = Modifier.height(16.dp))
+                        Button(
+                            onClick = {
+                                if (address.isBlank()) {
+                                    Toast.makeText(context, "Address cannot be empty", Toast.LENGTH_SHORT).show()
+                                } else {
+                                    viewModel.updateAddress(address)
+                                    step = 2
+                                }
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = ButtonDefaults.buttonColors(containerColor = DarkGreenPrimary),
+                            shape = RoundedCornerShape(10.dp)
+                        ) {
+                            Text("Continue to Payment", color = CustomWhite)
+                        }
+                    }
+                    2 -> {
+                        Text("Payment", fontWeight = FontWeight.Bold, color = RichBlack)
+                        Spacer(modifier = Modifier.height(10.dp))
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            OutlinedTextField(
+                                value = couponText,
+                                onValueChange = { couponText = it },
+                                placeholder = { Text("Coupon Code") },
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .height(48.dp),
+                                singleLine = true,
+                                colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = DarkGreenPrimary)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Button(
+                                onClick = {
+                                    val coupon = viewModel.validateCoupon(couponText)
+                                    couponApplied = coupon != null
+                                    Toast.makeText(
+                                        context,
+                                        if (coupon != null) "Coupon ${coupon.code} applied" else "Invalid Coupon Code",
+                                        Toast.LENGTH_SHORT
+                                    ).show()
+                                },
+                                colors = ButtonDefaults.buttonColors(containerColor = DarkGreenPrimary),
+                                shape = RoundedCornerShape(8.dp),
+                                modifier = Modifier.height(46.dp)
+                            ) {
+                                Text("Apply", fontSize = 11.sp, color = CustomWhite)
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(14.dp))
+                        Card(colors = CardDefaults.cardColors(containerColor = SoftGrey), modifier = Modifier.fillMaxWidth()) {
+                            Column(modifier = Modifier.padding(12.dp)) {
+                                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                    Text("Item price", fontSize = 12.sp, color = MutedText)
+                                    Text("₹${String.format("%.2f", product.price)}", fontSize = 12.sp, color = RichBlack)
+                                }
+                                if (appliedCoupon != null) {
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                        Text("${appliedCoupon.code} discount", fontSize = 12.sp, color = DarkGreenPrimary)
+                                        Text("-₹${String.format("%.2f", discountAmount)}", fontSize = 12.sp, color = DarkGreenPrimary)
+                                    }
+                                }
+                                Divider(color = Color.LightGray, modifier = Modifier.padding(vertical = 6.dp))
+                                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                    Text("Total", fontWeight = FontWeight.Bold, color = RichBlack)
+                                    Text("₹${String.format("%.2f", finalAmount)}", fontWeight = FontWeight.Black, color = DarkGreenPrimary)
+                                }
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(16.dp))
+                        Button(
+                            onClick = {
+                                val act = activity ?: (context as? Activity)
+                                if (act == null) {
+                                    Toast.makeText(context, "Payment unavailable", Toast.LENGTH_SHORT).show()
+                                    return@Button
+                                }
+                                val summary = "${product.name} x1"
+                                viewModel.setPendingCheckout(
+                                    com.example.viewmodel.PendingCheckout(
+                                        totalAmount = finalAmount,
+                                        summary = summary,
+                                        orderId = orderId,
+                                        address = address,
+                                        coupon = if (couponApplied) couponText else "",
+                                        clearCartAfterCheckout = false
+                                    )
+                                )
+                                try {
+                                    Checkout.preload(act.applicationContext)
+                                    val checkout = Checkout()
+                                    checkout.setKeyID(BuildConfig.RAZORPAY_KEY_ID)
+                                    val options = JSONObject().apply {
+                                        put("name", "ZYL VOR BAZAAR")
+                                        put("description", summary.take(255))
+                                        put("currency", "INR")
+                                        put("amount", (finalAmount * 100).toInt())
+                                        put("prefill", JSONObject().apply {
+                                            put("email", user?.email ?: "")
+                                            put("contact", user?.phone ?: "")
+                                        })
+                                        put("theme", JSONObject().apply { put("color", "#1B5E20") })
+                                    }
+                                    checkout.open(act, options)
+                                } catch (e: Exception) {
+                                    viewModel.clearPendingCheckout()
+                                    Toast.makeText(context, "Could not open payment: ${e.message}", Toast.LENGTH_LONG).show()
+                                }
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = ButtonDefaults.buttonColors(containerColor = DarkGreenPrimary),
+                            shape = RoundedCornerShape(10.dp)
+                        ) {
+                            Icon(Icons.Default.Lock, contentDescription = null, tint = CustomWhite, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("Pay Securely ₹${String.format("%.2f", finalAmount)}", color = CustomWhite, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                    3 -> {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
+                            Icon(Icons.Default.CheckCircle, contentDescription = null, tint = DarkGreenPrimary, modifier = Modifier.size(56.dp))
+                            Spacer(modifier = Modifier.height(12.dp))
+                            Text("Order Placed Successfully!", fontWeight = FontWeight.Black, color = DarkGreenPrimary)
+                            Text(orderId, fontSize = 12.sp, color = MutedText)
+                            Spacer(modifier = Modifier.height(18.dp))
+                            Button(
+                                onClick = onDismiss,
+                                modifier = Modifier.fillMaxWidth(),
+                                colors = ButtonDefaults.buttonColors(containerColor = DarkGreenPrimary),
+                                shape = RoundedCornerShape(10.dp)
+                            ) {
+                                Text("Continue Shopping", color = CustomWhite)
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 }
@@ -5799,7 +6126,8 @@ fun ProductDetailPane(
                                                 summary = summary,
                                                 orderId = directOrderId,
                                                 address = tempAddress,
-                                                coupon = if (isCouponApplied) couponText else ""
+                                                coupon = if (isCouponApplied) couponText else "",
+                                                clearCartAfterCheckout = false
                                             )
                                         )
                                         try {
@@ -5821,6 +6149,7 @@ fun ProductDetailPane(
                                             }
                                             checkout.open(act, options)
                                         } catch (e: Exception) {
+                                            viewModel.clearPendingCheckout()
                                             Toast.makeText(context, "Could not open payment: ${e.message}", Toast.LENGTH_LONG).show()
                                         }
                                     } else {
