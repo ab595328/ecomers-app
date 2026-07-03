@@ -6926,25 +6926,11 @@ fun SellerPanelScreen(
                                         }
                                         Spacer(modifier = Modifier.height(8.dp))
                                         Text(
-                                            text = "Your seller verification profile is under review. While your profile is pending, you can add products to your catalog, but you cannot receive any customer orders.",
+                                            text = "Your seller verification profile is under admin review. While your profile is pending, you can add products to your catalog, but you cannot receive any customer orders.",
                                             fontSize = 12.sp,
                                             color = RichBlack,
                                             lineHeight = 16.sp
                                         )
-                                        Spacer(modifier = Modifier.height(14.dp))
-                                        Button(
-                                            onClick = {
-                                                viewModel.verifySeller(currentUser?.email ?: "", true)
-                                                Toast.makeText(context, "Seller Profile Instantly Verified!", Toast.LENGTH_LONG).show()
-                                            },
-                                            colors = ButtonDefaults.buttonColors(containerColor = DarkGreenPrimary),
-                                            shape = RoundedCornerShape(8.dp),
-                                            modifier = Modifier.fillMaxWidth()
-                                        ) {
-                                            Icon(Icons.Default.Verified, contentDescription = "", tint = CustomWhite, modifier = Modifier.size(16.dp))
-                                            Spacer(modifier = Modifier.width(6.dp))
-                                            Text("Simulate Instant Approval (Verify Now)", fontWeight = FontWeight.Bold, color = CustomWhite, fontSize = 12.sp)
-                                        }
                                     }
                                 }
                             }

@@ -929,17 +929,6 @@ class BazaarViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    fun verifySeller(email: String, verified: Boolean) {
-        viewModelScope.launch {
-            val user = repository.getUser(email) ?: return@launch
-            val updated = user.copy(
-                isSellerVerified = verified,
-                isSellerVerificationPending = !verified
-            )
-            saveUser(updated)
-        }
-    }
-
     fun logout() {
         try {
             FirebaseAuth.getInstance().signOut()
