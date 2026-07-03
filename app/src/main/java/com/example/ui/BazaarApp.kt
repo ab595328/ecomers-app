@@ -81,6 +81,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
+import java.text.SimpleDateFormat
 import java.util.Locale
 
 private const val HELP_WHATSAPP_NUMBER = "919101785067"
@@ -326,8 +327,24 @@ fun animateTransition(target: Float, duration: Int): State<Float> {
 @Composable
 fun DeliveryLoginHero(
     modifier: Modifier = Modifier,
+    role: String,
     badgeText: String
 ) {
+    val imageRes = when (role) {
+        "Seller" -> R.drawable.img_seller_login_hero
+        "DeliveryPartner" -> R.drawable.img_delivery_login_hero
+        else -> R.drawable.img_user_login_hero
+    }
+    val contentDesc = when (role) {
+        "Seller" -> "Seller managing catalog"
+        "DeliveryPartner" -> "Fast grocery delivery partner"
+        else -> "Customer shopping fresh groceries"
+    }
+    val iconVector = when (role) {
+        "Seller" -> Icons.Default.Storefront
+        "DeliveryPartner" -> Icons.Default.DeliveryDining
+        else -> Icons.Default.LocalMall
+    }
     Card(
         modifier = modifier
             .fillMaxWidth()
@@ -338,8 +355,8 @@ fun DeliveryLoginHero(
     ) {
         Box(modifier = Modifier.fillMaxSize()) {
             Image(
-                painter = painterResource(id = R.drawable.img_delivery_login_hero),
-                contentDescription = "Fast grocery delivery partner",
+                painter = painterResource(id = imageRes),
+                contentDescription = contentDesc,
                 modifier = Modifier.fillMaxSize(),
                 contentScale = ContentScale.Crop
             )
@@ -362,7 +379,7 @@ fun DeliveryLoginHero(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Icon(
-                    imageVector = Icons.Default.DeliveryDining,
+                    imageVector = iconVector,
                     contentDescription = null,
                     tint = DarkGreenPrimary,
                     modifier = Modifier.size(20.dp)
@@ -408,7 +425,14 @@ fun LoginScreen(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
-        DeliveryLoginHero(badgeText = "Fresh delivery in minutes")
+        DeliveryLoginHero(
+            role = selectedRole,
+            badgeText = when (selectedRole) {
+                "Seller" -> "Manage your store catalog"
+                "DeliveryPartner" -> "Fresh delivery in minutes"
+                else -> "Explore premium green marketplace"
+            }
+        )
 
         Spacer(modifier = Modifier.height(20.dp))
 
@@ -655,7 +679,7 @@ fun RegisterScreen(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
-        DeliveryLoginHero(badgeText = "Join fast local delivery")
+        DeliveryLoginHero(role = selectedRole, badgeText = "Join fast local delivery")
 
         Spacer(modifier = Modifier.height(16.dp))
 
@@ -1721,6 +1745,8 @@ fun MainScreen(
                             couponApplied = pending.coupon,
                             deliveryAddressLat = pending.addressLat,
                             deliveryAddressLng = pending.addressLng,
+                            paymentMode = "Online Payment",
+                            paymentTransactionId = result.paymentId,
                             clearCartAfterCheckout = pending.clearCartAfterCheckout
                         )
                         viewModel.notifyCheckoutSuccess()
@@ -2134,38 +2160,17 @@ fun HomeScreen(
                     }
                 }
 
-                // Plus Status Badge
-                if (user?.isPlusMember == true) {
-                    Box(
-                        modifier = Modifier
-                            .background(
-                                Brush.horizontalGradient(listOf(DarkGreenPrimary, MintAccent)),
-                                shape = RoundedCornerShape(16.dp)
-                            )
-                            .padding(horizontal = 12.dp, vertical = 6.dp)
-                    ) {
-                        Text(
-                            text = "ZVB Plus ⭐",
-                            style = MaterialTheme.typography.bodySmall.copy(
-                                fontWeight = FontWeight.ExtraBold,
-                                color = CustomWhite
-                            ),
-                            fontSize = 11.sp
-                        )
-                    }
-                } else {
-                    Box(
-                        modifier = Modifier
-                            .background(LightGreenSecondary, shape = RoundedCornerShape(16.dp))
-                            .padding(horizontal = 12.dp, vertical = 6.dp)
-                    ) {
-                        Text(
-                            text = "Standard Care",
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = DarkGreenPrimary
-                        )
-                    }
+                Box(
+                    modifier = Modifier
+                        .background(LightGreenSecondary, shape = RoundedCornerShape(16.dp))
+                        .padding(horizontal = 12.dp, vertical = 6.dp)
+                ) {
+                    Text(
+                        text = "Standard Care",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = DarkGreenPrimary
+                    )
                 }
             }
         }
@@ -4510,12 +4515,15 @@ fun ProfileScreen(
 ) {
     val user by viewModel.currentUser.collectAsState()
     val languages by viewModel.languages.collectAsState()
+    val orders by viewModel.currentOrders.collectAsState()
     val context = LocalContext.current
+    val onlinePaymentOrders = orders.filter { !it.paymentMode.equals("COD", ignoreCase = true) }
 
     // Dialog state controllers
     var showEditProfile by remember { mutableStateOf(false) }
     var showAddresses by remember { mutableStateOf(false) }
     var showCards by remember { mutableStateOf(false) }
+    var showPaymentHistory by remember { mutableStateOf(false) }
     var showLanguage by remember { mutableStateOf(false) }
     var showPrivacy by remember { mutableStateOf(false) }
     var showHelpCenter by remember { mutableStateOf(false) }
@@ -4595,52 +4603,8 @@ fun ProfileScreen(
                     }
 
                     Spacer(modifier = Modifier.height(8.dp))
-
-                    if (user?.isPlusMember == true) {
-                        Box(
-                            modifier = Modifier
-                                .background(AccentGold, shape = RoundedCornerShape(12.dp))
-                                .padding(horizontal = 14.dp, vertical = 4.dp)
-                        ) {
-                            Text(
-                                text = "👑 PLUS MEMBER ACTIVE",
-                                color = RichBlack,
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 11.sp
-                            )
-                        }
-                    }
                 }
             }
-        }
-
-        // Section header
-        item {
-            Text(
-                text = "ZYL VOR BAZAAR PLUS SPECIALTY",
-                style = MaterialTheme.typography.bodySmall.copy(
-                    fontWeight = FontWeight.Black,
-                    color = MutedText
-                ),
-                modifier = Modifier.padding(start = 20.dp, top = 8.dp, bottom = 4.dp)
-            )
-        }
-
-        // ZYL VOR BAZAAR Plus VIP interactive toggle card
-        item {
-            ProfileInteractiveRow(
-                icon = Icons.Default.Stars,
-                title = "ZYL VOR BAZAAR Plus",
-                description = user?.let {
-                    if (isSelectedAndTrue(it.isPlusMember)) "Premium VIP member status active" else "Unlock free shipping, priority assistance"
-                } ?: "Tap to join Plus",
-                onClick = {
-                    viewModel.togglePlusMembership()
-                    val msg = if (user?.isPlusMember == false) "Plus VIP Active! Welcome to priority catalog shipping." else "Standard membership active."
-                    Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
-                },
-                accentColor = AccentGold
-            )
         }
 
         // Headings: Profile customization options
@@ -4672,6 +4636,19 @@ fun ProfileScreen(
                 title = "Saved Credit / Debit & Gift Cards",
                 description = user?.savedCards ?: "No saved standard bank cards",
                 onClick = { showCards = true }
+            )
+        }
+
+        item {
+            ProfileInteractiveRow(
+                icon = Icons.Default.History,
+                title = "Payment History",
+                description = if (onlinePaymentOrders.isEmpty()) {
+                    "No online payments completed yet"
+                } else {
+                    "${onlinePaymentOrders.size} online payment record(s)"
+                },
+                onClick = { showPaymentHistory = true }
             )
         }
 
@@ -4957,6 +4934,78 @@ fun ProfileScreen(
                             colors = ButtonDefaults.buttonColors(containerColor = DarkGreenPrimary)
                         ) {
                             Text("Update Payment")
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if (showPaymentHistory) {
+        val dateFormatter = remember { SimpleDateFormat("dd MMM yyyy, hh:mm a", Locale.getDefault()) }
+        Dialog(onDismissRequest = { showPaymentHistory = false }) {
+            Surface(
+                shape = RoundedCornerShape(16.dp),
+                color = CustomWhite,
+                modifier = Modifier.shadow(8.dp)
+            ) {
+                Column(
+                    modifier = Modifier
+                        .padding(24.dp)
+                        .fillMaxWidth()
+                ) {
+                    Text("Payment History", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = RichBlack)
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text("Only completed online payments are shown here.", fontSize = 12.sp, color = MutedText)
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    if (onlinePaymentOrders.isEmpty()) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 24.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text("No online payment history yet.", color = MutedText, fontSize = 13.sp)
+                        }
+                    } else {
+                        LazyColumn(
+                            modifier = Modifier.heightIn(max = 360.dp),
+                            verticalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            items(onlinePaymentOrders) { order ->
+                                Card(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    colors = CardDefaults.cardColors(containerColor = SoftGrey),
+                                    shape = RoundedCornerShape(12.dp)
+                                ) {
+                                    Column(modifier = Modifier.padding(12.dp)) {
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Text(order.orderId, fontWeight = FontWeight.Black, color = RichBlack, fontSize = 12.sp)
+                                            Text("₹${String.format("%.2f", order.totalAmount)}", fontWeight = FontWeight.Black, color = DarkGreenPrimary, fontSize = 13.sp)
+                                        }
+                                        Spacer(modifier = Modifier.height(4.dp))
+                                        Text(order.itemsSummary, color = MutedText, fontSize = 11.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                                        Spacer(modifier = Modifier.height(6.dp))
+                                        Text("Paid on ${dateFormatter.format(java.util.Date(order.orderDate))}", color = RichBlack, fontSize = 11.sp)
+                                        Text("Mode: ${order.paymentMode}", color = MutedText, fontSize = 11.sp)
+                                        if (order.paymentTransactionId.isNotBlank()) {
+                                            Text("Txn: ${order.paymentTransactionId}", color = MutedText, fontSize = 11.sp)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(18.dp))
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                        TextButton(onClick = { showPaymentHistory = false }) {
+                            Text("Close", color = DarkGreenPrimary)
                         }
                     }
                 }

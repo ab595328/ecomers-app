@@ -118,7 +118,8 @@ data class Order(
     val sellerConfirmed: Boolean = false,
     val sellerRejectRequested: Boolean = false,
     val sellerChangeDeliveryBoyRequested: Boolean = false,
-    val paymentMode: String = "COD"
+    val paymentMode: String = "COD",
+    val paymentTransactionId: String = ""
 )
 
 // --- Dynamic Config Data Classes (Firestore-only, not Room entities) ---
@@ -240,7 +241,7 @@ interface AppDao {
 // --- App Database ---
 @Database(
     entities = [User::class, Product::class, CartItem::class, WishlistItem::class, Order::class],
-    version = 5,
+    version = 6,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -431,7 +432,8 @@ class AppRepository(private val appDao: AppDao) {
             sellerConfirmed = map["sellerConfirmed"] as? Boolean ?: false,
             sellerRejectRequested = map["sellerRejectRequested"] as? Boolean ?: false,
             sellerChangeDeliveryBoyRequested = map["sellerChangeDeliveryBoyRequested"] as? Boolean ?: false,
-            paymentMode = map["paymentMode"] as? String ?: "COD"
+            paymentMode = map["paymentMode"] as? String ?: "COD",
+            paymentTransactionId = map["paymentTransactionId"] as? String ?: ""
         )
     }
 
@@ -452,7 +454,8 @@ class AppRepository(private val appDao: AppDao) {
             "sellerConfirmed" to o.sellerConfirmed,
             "sellerRejectRequested" to o.sellerRejectRequested,
             "sellerChangeDeliveryBoyRequested" to o.sellerChangeDeliveryBoyRequested,
-            "paymentMode" to o.paymentMode
+            "paymentMode" to o.paymentMode,
+            "paymentTransactionId" to o.paymentTransactionId
         )
     }
 
@@ -827,44 +830,20 @@ class AppRepository(private val appDao: AppDao) {
         }
     }
 
-    fun getOrders(email: String): Flow<List<Order>> = callbackFlow {
-        val listener = FirebaseFirestore.getInstance()
-            .collection("orders")
-            .whereEqualTo("email", email)
-            .addSnapshotListener { snapshot, error ->
-                if (error != null) {
-                    close(error)
-                    return@addSnapshotListener
-                }
-                if (snapshot != null) {
-                    val list = snapshot.documents.mapNotNull { doc ->
-                        doc.data?.let { mapToOrder(it) }
-                    }
-                    trySend(list)
-                }
-            }
-        awaitClose { listener.remove() }
-    }
+    fun getOrders(email: String): Flow<List<Order>> = appDao.getOrders(email)
 
-    fun getAllOrders(): Flow<List<Order>> = callbackFlow {
-        val listener = FirebaseFirestore.getInstance()
-            .collection("orders")
-            .addSnapshotListener { snapshot, error ->
-                if (error != null) {
-                    close(error)
-                    return@addSnapshotListener
-                }
-                if (snapshot != null) {
-                    val list = snapshot.documents.mapNotNull { doc ->
-                        doc.data?.let { mapToOrder(it) }
-                    }
-                    trySend(list)
-                }
-            }
-        awaitClose { listener.remove() }
+    fun getAllOrders(): Flow<List<Order>> = appDao.getAllOrders()
+
+    suspend fun upsertOrderLocal(order: Order) {
+        try {
+            appDao.insertOrder(order)
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
     }
 
     suspend fun insertOrder(order: Order) {
+        upsertOrderLocal(order)
         try {
             FirebaseFirestore.getInstance()
                 .collection("orders")
@@ -879,6 +858,11 @@ class AppRepository(private val appDao: AppDao) {
     suspend fun updateOrder(order: Order) = insertOrder(order)
 
     suspend fun deleteOrder(orderId: String) {
+        try {
+            appDao.deleteOrder(orderId)
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
         try {
             FirebaseFirestore.getInstance()
                 .collection("orders")

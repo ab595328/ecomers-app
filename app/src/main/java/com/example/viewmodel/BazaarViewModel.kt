@@ -194,7 +194,8 @@ fun Order.toMap(): Map<String, Any> {
         "sellerConfirmed" to sellerConfirmed,
         "sellerRejectRequested" to sellerRejectRequested,
         "sellerChangeDeliveryBoyRequested" to sellerChangeDeliveryBoyRequested,
-        "paymentMode" to paymentMode
+        "paymentMode" to paymentMode,
+        "paymentTransactionId" to paymentTransactionId
     )
 }
 
@@ -216,7 +217,8 @@ fun Map<String, Any?>.toOrder(): Order {
         sellerConfirmed = this["sellerConfirmed"] as? Boolean ?: false,
         sellerRejectRequested = this["sellerRejectRequested"] as? Boolean ?: false,
         sellerChangeDeliveryBoyRequested = this["sellerChangeDeliveryBoyRequested"] as? Boolean ?: false,
-        paymentMode = this["paymentMode"] as? String ?: "COD"
+        paymentMode = this["paymentMode"] as? String ?: "COD",
+        paymentTransactionId = this["paymentTransactionId"] as? String ?: ""
     )
 }
 
@@ -551,7 +553,7 @@ class BazaarViewModel(application: Application) : AndroidViewModel(application) 
                     }
                     viewModelScope.launch {
                         orderList.forEach { order ->
-                            repository.insertOrder(order)
+                            repository.upsertOrderLocal(order)
                         }
                     }
                 }
@@ -1090,6 +1092,8 @@ class BazaarViewModel(application: Application) : AndroidViewModel(application) 
         couponApplied: String = "",
         deliveryAddressLat: Double = 0.0,
         deliveryAddressLng: Double = 0.0,
+        paymentMode: String = "COD",
+        paymentTransactionId: String = "",
         clearCartAfterCheckout: Boolean = true
     ) {
         val user = _currentUser.value ?: return
@@ -1105,7 +1109,9 @@ class BazaarViewModel(application: Application) : AndroidViewModel(application) 
                 deliveryAddress = deliveryAddress,
                 deliveryAddressLat = deliveryAddressLat,
                 deliveryAddressLng = deliveryAddressLng,
-                couponApplied = couponApplied
+                couponApplied = couponApplied,
+                paymentMode = paymentMode,
+                paymentTransactionId = paymentTransactionId
             )
             repository.insertOrder(newOrder)
             if (clearCartAfterCheckout) {
