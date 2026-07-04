@@ -78,7 +78,8 @@ data class Product(
     val description: String,
     val isFeatured: Boolean = false,
     val sellerEmail: String = "", // tags who listed the product
-    val extraImages: String = "" // comma-separated secondary images
+    val extraImages: String = "", // comma-separated secondary images
+    val stockQuantity: Int = 0
 )
 
 // --- Entity: CartItem ---
@@ -124,7 +125,8 @@ data class Order(
     val sellerRejectRequested: Boolean = false,
     val sellerChangeDeliveryBoyRequested: Boolean = false,
     val paymentMode: String = "COD",
-    val paymentTransactionId: String = ""
+    val paymentTransactionId: String = "",
+    val productQuantities: String = ""
 )
 
 // --- Dynamic Config Data Classes (Firestore-only, not Room entities) ---
@@ -162,7 +164,10 @@ data class Shortcut(
 data class AppConfig(
     val categories: List<String> = listOf("All", "Electronics", "Fresh Products", "Fashion", "Home & Kitchen"),
     val languages: List<String> = listOf("English", "Español", "Français", "Deutsch", "Hindi", "Bengali"),
-    val flashSaleEndTime: Long = 0L
+    val flashSaleEndTime: Long = 0L,
+    val serviceCities: List<String> = emptyList(),
+    val servicePincodes: List<String> = emptyList(),
+    val payoutDelayHours: Int = 24
 )
 
 // --- DAO Interface ---
@@ -190,6 +195,9 @@ interface AppDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertProduct(product: Product)
+
+    @Query("DELETE FROM products WHERE id = :productId")
+    suspend fun deleteProduct(productId: Int)
 
     @Query("SELECT COUNT(*) FROM products")
     suspend fun getProductCount(): Int
@@ -246,7 +254,7 @@ interface AppDao {
 // --- App Database ---
 @Database(
     entities = [User::class, Product::class, CartItem::class, WishlistItem::class, Order::class],
-    version = 7,
+    version = 9,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -400,7 +408,8 @@ class AppRepository(private val appDao: AppDao) {
             description = map["description"] as? String ?: "",
             isFeatured = map["isFeatured"] as? Boolean ?: false,
             sellerEmail = map["sellerEmail"] as? String ?: "",
-            extraImages = map["extraImages"] as? String ?: ""
+            extraImages = map["extraImages"] as? String ?: "",
+            stockQuantity = (map["stockQuantity"] as? Number)?.toInt()?.coerceAtLeast(0) ?: 100
         )
     }
 
@@ -416,7 +425,8 @@ class AppRepository(private val appDao: AppDao) {
             "description" to p.description,
             "isFeatured" to p.isFeatured,
             "sellerEmail" to p.sellerEmail,
-            "extraImages" to p.extraImages
+            "extraImages" to p.extraImages,
+            "stockQuantity" to p.stockQuantity.coerceAtLeast(0)
         )
     }
 
@@ -443,7 +453,8 @@ class AppRepository(private val appDao: AppDao) {
             sellerRejectRequested = map["sellerRejectRequested"] as? Boolean ?: false,
             sellerChangeDeliveryBoyRequested = map["sellerChangeDeliveryBoyRequested"] as? Boolean ?: false,
             paymentMode = map["paymentMode"] as? String ?: "COD",
-            paymentTransactionId = map["paymentTransactionId"] as? String ?: ""
+            paymentTransactionId = map["paymentTransactionId"] as? String ?: "",
+            productQuantities = map["productQuantities"] as? String ?: ""
         )
     }
 
@@ -470,7 +481,8 @@ class AppRepository(private val appDao: AppDao) {
             "sellerRejectRequested" to o.sellerRejectRequested,
             "sellerChangeDeliveryBoyRequested" to o.sellerChangeDeliveryBoyRequested,
             "paymentMode" to o.paymentMode,
-            "paymentTransactionId" to o.paymentTransactionId
+            "paymentTransactionId" to o.paymentTransactionId,
+            "productQuantities" to o.productQuantities
         )
     }
 
@@ -607,19 +619,18 @@ class AppRepository(private val appDao: AppDao) {
 
     suspend fun insertProducts(products: List<Product>) {
         try {
-            val db = FirebaseFirestore.getInstance()
-            products.forEach { prod ->
-                db.collection("products")
-                    .document(prod.id.toString())
-                    .set(productToMap(prod))
-                    .awaitTask()
-            }
+            appDao.insertProducts(products)
         } catch (e: Exception) {
             e.printStackTrace()
         }
     }
 
     suspend fun insertProduct(product: Product) {
+        try {
+            appDao.insertProduct(product)
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
         try {
             FirebaseFirestore.getInstance()
                 .collection("products")
@@ -629,6 +640,15 @@ class AppRepository(private val appDao: AppDao) {
         } catch (e: Exception) {
             e.printStackTrace()
         }
+    }
+
+    suspend fun deleteProduct(productId: Int) {
+        FirebaseFirestore.getInstance()
+            .collection("products")
+            .document(productId.toString())
+            .delete()
+            .awaitTask()
+        appDao.deleteProduct(productId)
     }
 
     suspend fun getProductCount(): Int {
@@ -990,7 +1010,10 @@ class AppRepository(private val appDao: AppDao) {
                     val config = AppConfig(
                         categories = (data["categories"] as? List<String>) ?: listOf("All", "Electronics", "Fresh Products", "Fashion", "Home & Kitchen"),
                         languages = (data["languages"] as? List<String>) ?: listOf("English", "Español", "Français", "Deutsch", "Hindi", "Bengali"),
-                        flashSaleEndTime = (data["flashSaleEndTime"] as? Number)?.toLong() ?: 0L
+                        flashSaleEndTime = (data["flashSaleEndTime"] as? Number)?.toLong() ?: 0L,
+                        serviceCities = (data["serviceCities"] as? List<String>) ?: emptyList(),
+                        servicePincodes = (data["servicePincodes"] as? List<String>) ?: emptyList(),
+                        payoutDelayHours = (data["payoutDelayHours"] as? Number)?.toInt() ?: 24
                     )
                     trySend(config)
                 } else {
@@ -1090,7 +1113,10 @@ class AppRepository(private val appDao: AppDao) {
                 val config = mapOf(
                     "categories" to listOf("All", "Electronics", "Fresh Products", "Fashion", "Home & Kitchen"),
                     "languages" to listOf("English", "Español", "Français", "Deutsch", "Hindi", "Bengali"),
-                    "flashSaleEndTime" to (System.currentTimeMillis() + 10800000L) // 3 hours from now
+                    "flashSaleEndTime" to (System.currentTimeMillis() + 10800000L), // 3 hours from now
+                    "serviceCities" to emptyList<String>(),
+                    "servicePincodes" to emptyList<String>(),
+                    "payoutDelayHours" to 24
                 )
                 db.collection("app_config").document("main").set(config).awaitTask()
             }

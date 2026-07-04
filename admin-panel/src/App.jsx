@@ -15,7 +15,8 @@ import {
   Sparkles,
   Star,
   Trash2,
-  Users as UsersIcon
+  Users as UsersIcon,
+  Settings
 } from 'lucide-react';
 import {
   collection,
@@ -32,15 +33,15 @@ const ORDER_STATUSES = ['Pending', 'Processing', 'Ready to Deliver', 'Shipped', 
 const ROLE_FILTERS = ['All', 'User', 'Seller', 'DeliveryPartner', 'Admin'];
 
 const defaultProducts = [
-  { id: 1, name: 'ZYL Sound Pro Wireless ANC', price: 129.99, originalPrice: 189.99, rating: 4.8, category: 'Electronics', imageUrlName: 'img_hero_banner', description: 'Premium high-fidelity wireless spatial audio headphones with leading hybrid Active Noise Cancelation. Styled in matte black with dynamic metallic accents.', isFeatured: true, sellerEmail: 'seller@store.com', extraImages: '' },
-  { id: 2, name: 'ZYL Active Sport Sync Watch', price: 199.99, originalPrice: 249.99, rating: 4.6, category: 'Electronics', imageUrlName: '', description: 'Always-on AMOLED wellness assistant monitor with precise multi-sport tracking, sleep telemetry, and rapid 5-day continuous charging capability.', isFeatured: true, sellerEmail: 'seller@store.com', extraImages: '' },
-  { id: 3, name: 'Premium Farms Organic Apples (1kg)', price: 4.99, originalPrice: 6.99, rating: 4.9, category: 'Fresh Products', imageUrlName: '', description: 'Crispy, hand-picked seasonal honeycomb organic apples. Sourced sustainably from local highland green farms directly to your table of freshness.', isFeatured: true, sellerEmail: 'seller@store.com', extraImages: '' },
-  { id: 4, name: 'Farm-Fresh Avocados (Pack of 3)', price: 5.49, originalPrice: 7.99, rating: 4.7, category: 'Fresh Products', imageUrlName: '', description: 'Buttery local green Hass avocados ripe and ready to serve. Wealthy with nutrients, vitamins, and pure monounsaturated wellness lipids.', isFeatured: false, sellerEmail: 'seller@store.com', extraImages: '' },
-  { id: 5, name: 'Organic Handpicked Strawberries (500g)', price: 6.99, originalPrice: 8.99, rating: 4.8, category: 'Fresh Products', imageUrlName: '', description: 'Sweet, delicious organic berries cultivated with care. Selected for supreme taste, vibrant crimson look, and ideal ripeness levels.', isFeatured: true, sellerEmail: 'seller@store.com', extraImages: '' },
-  { id: 6, name: 'Emerald Velocity Retro Sneakers', price: 79.99, originalPrice: 119.99, rating: 4.7, category: 'Fashion', imageUrlName: '', description: 'Vibrant emerald accents paired with breathable slate mesh and durable vulcanized running heels. Engineered for day-to-day dynamic strides.', isFeatured: true, sellerEmail: 'seller@store.com', extraImages: '' },
-  { id: 7, name: 'Classic Forest Leather Wallet', price: 34.99, originalPrice: 49.99, rating: 4.5, category: 'Fashion', imageUrlName: '', description: 'Genuine handcrafted full-grain green premium leather wallet. Offers precise built-in card slips and security shielding lines.', isFeatured: false, sellerEmail: 'seller@store.com', extraImages: '' },
-  { id: 8, name: 'Aroma Brew Smart Drip Coffee Maker', price: 59.99, originalPrice: 89.99, rating: 4.4, category: 'Home & Kitchen', imageUrlName: '', description: 'Sleek compact programmable thermal drip brewing machine. Prepares rich bold roast flavor directly into double-walled glass mugs.', isFeatured: false, sellerEmail: 'seller@store.com', extraImages: '' },
-  { id: 9, name: 'TurboCrisp Digital Air Fryer', price: 99.99, originalPrice: 149.99, rating: 4.8, category: 'Home & Kitchen', imageUrlName: '', description: 'Superheated high-density air vortex crisping technology. Cooks crunchy golden wings, chips, and snacks with up to 90% reduced fat oil.', isFeatured: true, sellerEmail: 'seller@store.com', extraImages: '' }
+  { id: 1, name: 'ZYL Sound Pro Wireless ANC', price: 129.99, originalPrice: 189.99, rating: 4.8, category: 'Electronics', imageUrlName: 'img_hero_banner', description: 'Premium high-fidelity wireless spatial audio headphones with leading hybrid Active Noise Cancelation. Styled in matte black with dynamic metallic accents.', isFeatured: true, sellerEmail: 'seller@store.com', extraImages: '', stockQuantity: 25 },
+  { id: 2, name: 'ZYL Active Sport Sync Watch', price: 199.99, originalPrice: 249.99, rating: 4.6, category: 'Electronics', imageUrlName: '', description: 'Always-on AMOLED wellness assistant monitor with precise multi-sport tracking, sleep telemetry, and rapid 5-day continuous charging capability.', isFeatured: true, sellerEmail: 'seller@store.com', extraImages: '', stockQuantity: 18 },
+  { id: 3, name: 'Premium Farms Organic Apples (1kg)', price: 4.99, originalPrice: 6.99, rating: 4.9, category: 'Fresh Products', imageUrlName: '', description: 'Crispy, hand-picked seasonal honeycomb organic apples. Sourced sustainably from local highland green farms directly to your table of freshness.', isFeatured: true, sellerEmail: 'seller@store.com', extraImages: '', stockQuantity: 80 },
+  { id: 4, name: 'Farm-Fresh Avocados (Pack of 3)', price: 5.49, originalPrice: 7.99, rating: 4.7, category: 'Fresh Products', imageUrlName: '', description: 'Buttery local green Hass avocados ripe and ready to serve. Wealthy with nutrients, vitamins, and pure monounsaturated wellness lipids.', isFeatured: false, sellerEmail: 'seller@store.com', extraImages: '', stockQuantity: 45 },
+  { id: 5, name: 'Organic Handpicked Strawberries (500g)', price: 6.99, originalPrice: 8.99, rating: 4.8, category: 'Fresh Products', imageUrlName: '', description: 'Sweet, delicious organic berries cultivated with care. Selected for supreme taste, vibrant crimson look, and ideal ripeness levels.', isFeatured: true, sellerEmail: 'seller@store.com', extraImages: '', stockQuantity: 60 },
+  { id: 6, name: 'Emerald Velocity Retro Sneakers', price: 79.99, originalPrice: 119.99, rating: 4.7, category: 'Fashion', imageUrlName: '', description: 'Vibrant emerald accents paired with breathable slate mesh and durable vulcanized running heels. Engineered for day-to-day dynamic strides.', isFeatured: true, sellerEmail: 'seller@store.com', extraImages: '', stockQuantity: 22 },
+  { id: 7, name: 'Classic Forest Leather Wallet', price: 34.99, originalPrice: 49.99, rating: 4.5, category: 'Fashion', imageUrlName: '', description: 'Genuine handcrafted full-grain green premium leather wallet. Offers precise built-in card slips and security shielding lines.', isFeatured: false, sellerEmail: 'seller@store.com', extraImages: '', stockQuantity: 35 },
+  { id: 8, name: 'Aroma Brew Smart Drip Coffee Maker', price: 59.99, originalPrice: 89.99, rating: 4.4, category: 'Home & Kitchen', imageUrlName: '', description: 'Sleek compact programmable thermal drip brewing machine. Prepares rich bold roast flavor directly into double-walled glass mugs.', isFeatured: false, sellerEmail: 'seller@store.com', extraImages: '', stockQuantity: 12 },
+  { id: 9, name: 'TurboCrisp Digital Air Fryer', price: 99.99, originalPrice: 149.99, rating: 4.8, category: 'Home & Kitchen', imageUrlName: '', description: 'Superheated high-density air vortex crisping technology. Cooks crunchy golden wings, chips, and snacks with up to 90% reduced fat oil.', isFeatured: true, sellerEmail: 'seller@store.com', extraImages: '', stockQuantity: 16 }
 ];
 
 const defaultUsers = [
@@ -111,6 +112,11 @@ function App() {
   const [newProductDesc, setNewProductDesc] = useState('');
   const [newProductSeller, setNewProductSeller] = useState('admin@bazaar.com');
   const [newProductFeatured, setNewProductFeatured] = useState(false);
+  const [newProductStock, setNewProductStock] = useState('');
+  const [appConfig, setAppConfig] = useState({ serviceCities: [], servicePincodes: [], payoutDelayHours: 24 });
+  const [serviceCitiesText, setServiceCitiesText] = useState('');
+  const [servicePincodesText, setServicePincodesText] = useState('');
+  const [payoutDelayHours, setPayoutDelayHours] = useState('24');
 
   useEffect(() => {
     const savedSession = window.localStorage.getItem('bazaarAdminSession');
@@ -148,6 +154,7 @@ function App() {
     let unsubscribeUsers = () => { };
     let unsubscribeProducts = () => { };
     let unsubscribeOrders = () => { };
+    let unsubscribeConfig = () => { };
 
     try {
       setLoading(true);
@@ -190,6 +197,13 @@ function App() {
           setLoading(false);
         }
       );
+      unsubscribeConfig = onSnapshot(doc(db, 'app_config', 'main'), configDoc => {
+        const config = configDoc.exists() ? configDoc.data() : {};
+        setAppConfig(config);
+        setServiceCitiesText((config.serviceCities || []).join(', '));
+        setServicePincodesText((config.servicePincodes || []).join(', '));
+        setPayoutDelayHours(String(config.payoutDelayHours ?? 24));
+      });
     } catch (error) {
       console.error('Firebase init failed, switching to mock:', error);
       setDbError('Invalid Firebase configuration.');
@@ -200,6 +214,7 @@ function App() {
       unsubscribeUsers();
       unsubscribeProducts();
       unsubscribeOrders();
+      unsubscribeConfig();
     };
   }, [authUser, useMockData]);
 
@@ -417,8 +432,9 @@ function App() {
     e.preventDefault();
     const priceNum = parseFloat(newProductPrice);
     const origPriceNum = parseFloat(newProductOrigPrice);
-    if (!newProductName || Number.isNaN(priceNum) || Number.isNaN(origPriceNum)) {
-      alert('Please fill in valid name and numeric prices.');
+    const stockNum = Number(newProductStock);
+    if (!newProductName || Number.isNaN(priceNum) || Number.isNaN(origPriceNum) || !Number.isInteger(stockNum) || stockNum < 0) {
+      alert('Please fill in valid name, prices, and mandatory stock quantity.');
       return;
     }
 
@@ -435,7 +451,8 @@ function App() {
       imageUrlName: 'img_hero_banner',
       isFeatured: newProductFeatured,
       sellerEmail: newProductSeller || 'admin@bazaar.com',
-      extraImages: ''
+      extraImages: '',
+      stockQuantity: stockNum
     };
 
     if (useMockData) {
@@ -461,6 +478,26 @@ function App() {
     setNewProductCat('');
     setNewProductDesc('');
     setNewProductFeatured(false);
+    setNewProductStock('');
+  };
+
+  const saveServiceConfig = async event => {
+    event.preventDefault();
+    const splitValues = value => value.split(',').map(item => item.trim()).filter(Boolean);
+    const payload = {
+      ...appConfig,
+      serviceCities: splitValues(serviceCitiesText),
+      servicePincodes: splitValues(servicePincodesText).map(value => value.replace(/\D/g, '')).filter(Boolean),
+      payoutDelayHours: Math.max(0, Number.parseInt(payoutDelayHours, 10) || 0)
+    };
+    if (useMockData) {
+      setAppConfig(payload);
+      alert('Configuration saved in demo mode.');
+      return;
+    }
+    await setDoc(doc(db, 'app_config', 'main'), payload, { merge: true });
+    setDbStatusMsg('Service area and automatic payout schedule saved.');
+    setTimeout(() => setDbStatusMsg(''), 4000);
   };
 
   const updateOrder = async (orderId, payload) => {
@@ -538,7 +575,8 @@ function App() {
             ['dashboard', LayoutDashboard, 'Dashboard'],
             ['users', UsersIcon, 'Users'],
             ['products', ShoppingBag, 'Products'],
-            ['orders', FileText, 'Orders']
+            ['orders', FileText, 'Orders'],
+            ['settings', Settings, 'Service Settings']
           ].map(([tab, Icon, label]) => (
             <button key={tab} className={`nav-item ${activeTab === tab ? 'active' : ''}`} onClick={() => setActiveTab(tab)}>
               <Icon size={20} />
@@ -597,12 +635,14 @@ function App() {
               {activeTab === 'users' && 'User & Account Management'}
               {activeTab === 'products' && 'Inventory Products Catalog'}
               {activeTab === 'orders' && 'Order Transactions'}
+              {activeTab === 'settings' && 'Service Area & Payout Settings'}
             </h1>
             <p>
               {activeTab === 'dashboard' && 'Monitor marketplace stats, verification queues, revenue, and data tools.'}
               {activeTab === 'users' && 'Review buyers, sellers, delivery partners, admin accounts, and verification documents.'}
               {activeTab === 'products' && 'Add new items, manage featured products, and review seller inventory.'}
               {activeTab === 'orders' && 'Update workflow statuses, delivery assignment, payment details, and order flags.'}
+              {activeTab === 'settings' && 'Control eligible cities, pincodes, and automatic Razorpay payout timing.'}
             </p>
           </div>
         </header>
@@ -849,6 +889,27 @@ function App() {
                 )}
               </div>
             )}
+
+            {activeTab === 'settings' && (
+              <div className="glass-panel section-card">
+                <div className="section-header"><h2>Fulfilment Configuration</h2></div>
+                <form className="form-grid" onSubmit={saveServiceConfig}>
+                  <div className="form-group full-width">
+                    <label className="form-label">Service Cities (comma-separated)</label>
+                    <input className="form-control" value={serviceCitiesText} onChange={e => setServiceCitiesText(e.target.value)} placeholder="Delhi, Noida" />
+                  </div>
+                  <div className="form-group full-width">
+                    <label className="form-label">Service Pincodes (comma-separated)</label>
+                    <input className="form-control" value={servicePincodesText} onChange={e => setServicePincodesText(e.target.value)} placeholder="110001, 201301" />
+                  </div>
+                  <div className="form-group">
+                    <label className="form-label">Automatic payout delay (hours)</label>
+                    <input type="number" min="0" className="form-control" value={payoutDelayHours} onChange={e => setPayoutDelayHours(e.target.value)} required />
+                  </div>
+                  <div className="form-actions"><button className="btn btn-primary" type="submit">Save Settings</button></div>
+                </form>
+              </div>
+            )}
           </>
         )}
       </main>
@@ -878,6 +939,10 @@ function App() {
               <div className="form-group">
                 <label className="form-label">Seller Email Owner</label>
                 <input type="email" className="form-control" value={newProductSeller} onChange={e => setNewProductSeller(e.target.value)} />
+              </div>
+              <div className="form-group">
+                <label className="form-label">Stock Quantity</label>
+                <input type="number" min="0" step="1" className="form-control" value={newProductStock} onChange={e => setNewProductStock(e.target.value)} required />
               </div>
               <div className="form-group full-width">
                 <label className="form-label">Product Description</label>
@@ -1003,6 +1068,7 @@ function ProductsTab({ products, setShowProductModal, toggleProductFeatured, del
                 <th>Product Name</th>
                 <th>Category</th>
                 <th>Market Price</th>
+                <th>Stock</th>
                 <th>Featured</th>
                 <th>Seller Account</th>
                 <th>Manage</th>
@@ -1016,6 +1082,7 @@ function ProductsTab({ products, setShowProductModal, toggleProductFeatured, del
                     <p>{product.name}</p>
                     <span className="table-subtext clamp">{product.description}</span>
                   </td>
+                  <td><span className={`status-badge ${Number(product.stockQuantity || 0) === 0 ? 'cancelled' : 'verified'}`}>{Number(product.stockQuantity || 0) === 0 ? 'Out of Stock' : product.stockQuantity}</span></td>
                   <td>{product.category}</td>
                   <td>
                     <p className="accent-text">{formatCurrency(product.price)}</p>

@@ -68,6 +68,9 @@ import com.example.data.Shortcut
 import com.example.data.calculateDeliveryCharge
 import com.example.data.estimateDeliveryDistanceKm
 import com.example.data.estimateItemAmountFromOrderTotal
+import com.example.data.calculateDistanceKm
+import com.example.data.isAddressInServiceArea
+import com.example.data.isPincodeInServiceArea
 import com.example.ui.theme.*
 import com.example.viewmodel.AuthState
 import com.example.viewmodel.BazaarViewModel
@@ -80,6 +83,7 @@ import android.content.pm.PackageManager
 import android.location.Geocoder
 import androidx.core.content.ContextCompat
 import com.google.android.gms.location.LocationServices
+import com.google.android.gms.location.Priority
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
@@ -1755,9 +1759,12 @@ fun MainScreen(
                             deliveryCharge = pending.deliveryCharge,
                             paymentMode = "Online Payment",
                             paymentTransactionId = result.paymentId,
-                            clearCartAfterCheckout = pending.clearCartAfterCheckout
+                            clearCartAfterCheckout = pending.clearCartAfterCheckout,
+                            productQuantities = pending.productQuantities,
+                            onResult = { success, _ ->
+                                if (success) viewModel.notifyCheckoutSuccess()
+                            }
                         )
-                        viewModel.notifyCheckoutSuccess()
                         viewModel.clearPendingCheckout()
                     }
                 }
@@ -1772,6 +1779,10 @@ fun MainScreen(
                 }
             }
         }
+    }
+
+    LaunchedEffect(viewModel) {
+        viewModel.userMessages.collect { Toast.makeText(context, it, Toast.LENGTH_LONG).show() }
     }
 
     Scaffold(
@@ -1892,21 +1903,48 @@ fun MainScreen(
 // A. HOME SCREEN (Flipkart & Amazon vibe)
 // ==========================================
 
-/** Fetches the current location and returns "City, PostalCode" or a fallback string. */
 @SuppressLint("MissingPermission")
-private suspend fun getLocationText(context: android.content.Context): String {
+private suspend fun getCurrentAddressSelection(context: android.content.Context): AddressSelection? {
     return try {
         val fusedClient = LocationServices.getFusedLocationProviderClient(context)
         val location = suspendCancellableCoroutine<android.location.Location?> { cont ->
+            fusedClient.getCurrentLocation(Priority.PRIORITY_HIGH_ACCURACY, null)
+                .addOnSuccessListener { loc -> if (cont.isActive) cont.resume(loc) {} }
+                .addOnFailureListener { if (cont.isActive) cont.resume(null) {} }
+        } ?: suspendCancellableCoroutine<android.location.Location?> { cont ->
             fusedClient.lastLocation
                 .addOnSuccessListener { loc -> if (cont.isActive) cont.resume(loc) {} }
                 .addOnFailureListener { if (cont.isActive) cont.resume(null) {} }
         }
-        if (location == null) return "Current location"
+
+        if (location == null) return null
+        val address = withContext(Dispatchers.IO) {
+            @Suppress("DEPRECATION")
+            Geocoder(context, Locale.getDefault())
+                .getFromLocation(location.latitude, location.longitude, 1)
+                ?.firstOrNull()
+                ?.getAddressLine(0)
+                .orEmpty()
+        }
+        AddressSelection(
+            address = address.ifBlank { "Current location" },
+            latitude = location.latitude,
+            longitude = location.longitude
+        )
+    } catch (e: Exception) {
+        null
+    }
+}
+
+/** Fetches the current location and returns "City, PostalCode" or a fallback string. */
+@SuppressLint("MissingPermission")
+private suspend fun getLocationText(context: android.content.Context): String {
+    return try {
+        val current = getCurrentAddressSelection(context) ?: return "Current location"
         withContext(Dispatchers.IO) {
             @Suppress("DEPRECATION")
             val geocoder = Geocoder(context, Locale.getDefault())
-            val addrs = geocoder.getFromLocation(location.latitude, location.longitude, 1)
+            val addrs = geocoder.getFromLocation(current.latitude, current.longitude, 1)
             if (!addrs.isNullOrEmpty()) {
                 val a = addrs[0]
                 listOfNotNull(a.locality ?: a.subAdminArea, a.postalCode)
@@ -1927,6 +1965,18 @@ data class AddressSelection(
     val longitude: Double = 0.0
 )
 
+private fun hasValidCoordinates(latitude: Double, longitude: Double): Boolean {
+    return latitude != 0.0 && longitude != 0.0
+}
+
+private fun missingDistanceReason(sellerLatitude: Double, sellerLongitude: Double, addressLatitude: Double, addressLongitude: Double): String? {
+    return when {
+        !hasValidCoordinates(addressLatitude, addressLongitude) -> "Please detect/select your delivery location so distance can be calculated."
+        !hasValidCoordinates(sellerLatitude, sellerLongitude) -> "Seller shop location is missing, so delivery distance cannot be calculated."
+        else -> null
+    }
+}
+
 @Composable
 fun AddressSuggestionField(
     value: String,
@@ -1938,8 +1988,31 @@ fun AddressSuggestionField(
     maxLines: Int = 3
 ) {
     val context = LocalContext.current
+    val coroutineScope = rememberCoroutineScope()
     var suggestions by remember { mutableStateOf<List<AddressSelection>>(emptyList()) }
     var isSearching by remember { mutableStateOf(false) }
+    var isDetectingLocation by remember { mutableStateOf(false) }
+    val locationPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { permissions ->
+        if (permissions.values.any { it }) {
+            coroutineScope.launch {
+                isDetectingLocation = true
+                val selection = getCurrentAddressSelection(context)
+                isDetectingLocation = false
+                if (selection != null) {
+                    onValueChange(selection.address)
+                    onAddressSelected(selection)
+                    suggestions = emptyList()
+                    Toast.makeText(context, "Location detected. Distance will be calculated at checkout.", Toast.LENGTH_SHORT).show()
+                } else {
+                    Toast.makeText(context, "Unable to detect location. Please try again.", Toast.LENGTH_LONG).show()
+                }
+            }
+        } else {
+            Toast.makeText(context, "Location permission is required to detect distance.", Toast.LENGTH_LONG).show()
+        }
+    }
 
     LaunchedEffect(value) {
         if (value.trim().length < 3) {
@@ -1982,6 +2055,42 @@ fun AddressSuggestionField(
             trailingIcon = {
                 if (isSearching) {
                     CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp, color = DarkGreenPrimary)
+                } else {
+                    IconButton(
+                        onClick = {
+                            val fine = ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
+                            val coarse = ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
+                            if (fine || coarse) {
+                                coroutineScope.launch {
+                                    isDetectingLocation = true
+                                    val selection = getCurrentAddressSelection(context)
+                                    isDetectingLocation = false
+                                    if (selection != null) {
+                                        onValueChange(selection.address)
+                                        onAddressSelected(selection)
+                                        suggestions = emptyList()
+                                        Toast.makeText(context, "Location detected. Distance will be calculated at checkout.", Toast.LENGTH_SHORT).show()
+                                    } else {
+                                        Toast.makeText(context, "Unable to detect location. Please try again.", Toast.LENGTH_LONG).show()
+                                    }
+                                }
+                            } else {
+                                locationPermissionLauncher.launch(
+                                    arrayOf(
+                                        Manifest.permission.ACCESS_FINE_LOCATION,
+                                        Manifest.permission.ACCESS_COARSE_LOCATION
+                                    )
+                                )
+                            }
+                        },
+                        enabled = !isDetectingLocation
+                    ) {
+                        if (isDetectingLocation) {
+                            CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp, color = DarkGreenPrimary)
+                        } else {
+                            Icon(Icons.Default.MyLocation, contentDescription = "Detect location", tint = DarkGreenPrimary)
+                        }
+                    }
                 }
             },
             modifier = Modifier
@@ -2682,9 +2791,10 @@ fun HomeScreen(
                                 product = prod,
                                 onCallSelect = { onProductSelect(prod) },
                                 onCallAddToCart = {
-                                    viewModel.addToCart(prod)
-                                    coroutineScope.launch {
-                                        snackbarHostState.showSnackbar("✅ ${prod.name} added to cart!")
+                                    if (viewModel.addToCart(prod)) {
+                                        coroutineScope.launch {
+                                            snackbarHostState.showSnackbar("✅ ${prod.name} added to cart!")
+                                        }
                                     }
                                 },
                                 onCallBuyNow = { onProductBuy(prod) },
@@ -2771,12 +2881,72 @@ fun HomeScreen(
 
 // 2-Column Product Card
 fun Product.primaryPhotoUrl(): String {
-    if (imageUrlName.isNotBlank()) return imageUrlName
+    if (imageUrlName.isNotBlank()) return imageUrlName.trim()
     return extraImages
         .split(",")
         .map { it.trim() }
         .firstOrNull { it.isNotBlank() }
         .orEmpty()
+}
+
+fun resolveProductImageModel(context: android.content.Context, source: String): Any? {
+    val value = source.trim()
+    if (value.isBlank()) return null
+    if (value.startsWith("http://", true) || value.startsWith("https://", true) ||
+        value.startsWith("content://", true) || value.startsWith("file://", true)
+    ) return value
+    val resourceName = value.substringBeforeLast(".")
+    val drawableId = context.resources.getIdentifier(resourceName, "drawable", context.packageName)
+    return drawableId.takeIf { it != 0 } ?: value
+}
+
+private fun Order.productQuantityMap(): Map<Int, Int> {
+    return productQuantities
+        .split(",")
+        .mapNotNull { entry ->
+            val parts = entry.split(":")
+            val productId = parts.getOrNull(0)?.trim()?.toIntOrNull()
+            val quantity = parts.getOrNull(1)?.trim()?.toIntOrNull()
+            if (productId != null && quantity != null && quantity > 0) productId to quantity else null
+        }
+        .toMap()
+}
+
+private fun sellerScopedOrders(
+    sellerProducts: List<Product>,
+    allOrders: List<Order>
+): List<Order> {
+    val productsById = sellerProducts.associateBy { it.id }
+    val sellerProductNames = sellerProducts.map { it.name }
+
+    return allOrders.mapNotNull { order ->
+        val itemsById = order.productQuantityMap()
+            .filterKeys { productId -> productId in productsById.keys }
+
+        if (itemsById.isNotEmpty()) {
+            val sellerSummary = itemsById.entries.joinToString(", ") { (productId, quantity) ->
+                "${productsById.getValue(productId).name} x$quantity"
+            }
+            val subtotal = itemsById.entries.sumOf { (productId, quantity) ->
+                (productsById[productId]?.price ?: 0.0) * quantity
+            }
+            order.copy(itemsSummary = sellerSummary, totalAmount = subtotal)
+        } else {
+            val sellerItems = order.itemsSummary.split(", ").filter { itemStr ->
+                val productName = itemStr.substringBefore(" x").trim()
+                sellerProductNames.any { it.equals(productName, ignoreCase = true) }
+            }
+            if (sellerItems.isEmpty()) return@mapNotNull null
+
+            val subtotal = sellerItems.sumOf { itemStr ->
+                val productName = itemStr.substringBefore(" x").trim()
+                val quantity = itemStr.substringAfter(" x", "1").trim().toIntOrNull() ?: 1
+                val product = sellerProducts.find { it.name.equals(productName, ignoreCase = true) }
+                (product?.price ?: 0.0) * quantity
+            }
+            order.copy(itemsSummary = sellerItems.joinToString(", "), totalAmount = subtotal)
+        }
+    }
 }
 
 @Composable
@@ -2792,6 +2962,8 @@ fun ProductItemCard(
     onDecrement: () -> Unit = {}
 ) {
     val primaryPhotoUrl = product.primaryPhotoUrl()
+    val primaryPhotoModel = resolveProductImageModel(LocalContext.current, primaryPhotoUrl)
+    val isOutOfStock = product.stockQuantity <= 0
 
     Card(
         modifier = Modifier
@@ -2810,9 +2982,9 @@ fun ProductItemCard(
                 .background(SoftGrey)
         ) {
             // Display actual product photo if available, otherwise use a category visual.
-            if (primaryPhotoUrl.isNotBlank()) {
+            if (primaryPhotoModel != null) {
                 AsyncImage(
-                    model = primaryPhotoUrl,
+                    model = primaryPhotoModel,
                     contentDescription = product.name,
                     modifier = Modifier.fillMaxSize(),
                     contentScale = ContentScale.Crop,
@@ -2934,6 +3106,14 @@ fun ProductItemCard(
 
             Spacer(modifier = Modifier.height(8.dp))
 
+            Text(
+                text = if (isOutOfStock) "Out of Stock" else "${product.stockQuantity} in stock",
+                color = if (isOutOfStock) AccentRed else DarkGreenPrimary,
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Bold
+            )
+            Spacer(modifier = Modifier.height(6.dp))
+
             // Cart control: +/- row if in cart, else Add to Cart button
             if (cartQuantity > 0) {
                 Row(
@@ -2963,6 +3143,7 @@ fun ProductItemCard(
                     )
                     IconButton(
                         onClick = onIncrement,
+                        enabled = cartQuantity < product.stockQuantity,
                         modifier = Modifier.size(36.dp)
                     ) {
                         Icon(
@@ -2976,6 +3157,7 @@ fun ProductItemCard(
             } else {
                 Button(
                     onClick = onCallAddToCart,
+                    enabled = !isOutOfStock,
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(36.dp),
@@ -2991,7 +3173,7 @@ fun ProductItemCard(
                     )
                     Spacer(modifier = Modifier.width(4.dp))
                     Text(
-                        text = "Add to Cart",
+                        text = if (isOutOfStock) "Out of Stock" else "Add to Cart",
                         style = MaterialTheme.typography.bodySmall.copy(
                             fontWeight = FontWeight.Bold,
                             color = CustomWhite
@@ -3004,6 +3186,7 @@ fun ProductItemCard(
 
             OutlinedButton(
                 onClick = onCallBuyNow,
+                enabled = !isOutOfStock,
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(34.dp)
@@ -3163,9 +3346,10 @@ fun CategoriesScreen(
                             product = prod,
                             onCallSelect = { onProductSelect(prod) },
                             onCallAddToCart = {
-                                viewModel.addToCart(prod)
-                                coroutineScope.launch {
-                                    snackbarHostState.showSnackbar("✅ ${prod.name} added to cart!")
+                                if (viewModel.addToCart(prod)) {
+                                    coroutineScope.launch {
+                                        snackbarHostState.showSnackbar("✅ ${prod.name} added to cart!")
+                                    }
                                 }
                             },
                             onCallBuyNow = { onProductBuy(prod) },
@@ -3213,6 +3397,8 @@ fun CartScreen(
     val cartList by viewModel.currentCart.collectAsState()
     val allProducts by viewModel.allProducts.collectAsState()
     val user by viewModel.currentUser.collectAsState()
+    val appConfig by viewModel.appConfig.collectAsState()
+    val allUsers by viewModel.allUsers.collectAsState()
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }
@@ -3266,9 +3452,33 @@ fun CartScreen(
     val discountPercent = appliedCoupon?.discountPercent ?: 0
     val cartDiscountAmount = totalSubtotal * (discountPercent / 100.0)
     val cartPayableBeforeDelivery = (totalSubtotal - cartDiscountAmount).coerceAtLeast(0.0)
-    val cartDeliveryDistanceKm = estimateDeliveryDistanceKm(generatedCartOrderId)
+    val cartDistanceIssue = computedItems.firstNotNullOfOrNull { (_, product) ->
+        val seller = allUsers.find { it.email.equals(product.sellerEmail, ignoreCase = true) }
+        missingDistanceReason(
+            seller?.shopAddressLat ?: 0.0,
+            seller?.shopAddressLng ?: 0.0,
+            cartTempAddressLat,
+            cartTempAddressLng
+        )
+    }
+    val cartDeliveryDistanceKm = if (cartDistanceIssue == null) {
+        computedItems.mapNotNull { (_, product) ->
+            val seller = allUsers.find { it.email.equals(product.sellerEmail, ignoreCase = true) }
+            calculateDistanceKm(
+                seller?.shopAddressLat ?: 0.0,
+                seller?.shopAddressLng ?: 0.0,
+                cartTempAddressLat,
+                cartTempAddressLng
+            ).takeIf { it > 0.0 }
+        }.maxOrNull() ?: 0.0
+    } else {
+        0.0
+    }
     val cartDeliveryCharge = calculateDeliveryCharge(cartPayableBeforeDelivery, cartDeliveryDistanceKm)
     val cartFinalTotal = cartPayableBeforeDelivery + cartDeliveryCharge.totalCharge
+    val hasUnavailableCartItems = computedItems.any { (cartItem, product) ->
+        product.stockQuantity <= 0 || cartItem.quantity > product.stockQuantity
+    }
 
     Box(modifier = Modifier.fillMaxSize()) {
     Column(
@@ -3359,7 +3569,7 @@ fun CartScreen(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
-                        Text("Delivery Charge (${String.format("%.1f", cartDeliveryDistanceKm)} km)", color = MutedText)
+                        Text("Delivery Charge (${if (cartDeliveryDistanceKm > 0.0) String.format("%.1f km", cartDeliveryDistanceKm) else "distance pending"})", color = MutedText)
                         Text("₹${String.format("%.2f", cartDeliveryCharge.totalCharge)}", fontWeight = FontWeight.Bold, color = DarkGreenPrimary)
                     }
                     Text(
@@ -3383,15 +3593,33 @@ fun CartScreen(
 
                     Spacer(modifier = Modifier.height(16.dp))
 
+                    if (hasUnavailableCartItems) {
+                        Text(
+                            text = "Some cart items are out of stock. Remove or adjust them to checkout.",
+                            color = AccentRed,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                    }
+
                     Button(
                         onClick = {
-                            showCartCheckoutDialog = true
-                            cartCheckoutStep = 1
+                            val overStockItem = computedItems.firstOrNull { (cartItem, product) ->
+                                cartItem.quantity > product.stockQuantity
+                            }
+                            if (overStockItem != null) {
+                                Toast.makeText(context, "Only ${overStockItem.second.stockQuantity} products are available.", Toast.LENGTH_LONG).show()
+                            } else {
+                                showCartCheckoutDialog = true
+                                cartCheckoutStep = 1
+                            }
                         },
                         modifier = Modifier
                             .fillMaxWidth()
                             .height(50.dp)
                             .testTag("checkout_button"),
+                        enabled = !hasUnavailableCartItems,
                         colors = ButtonDefaults.buttonColors(containerColor = DarkGreenPrimary),
                         shape = RoundedCornerShape(12.dp)
                     ) {
@@ -3479,7 +3707,11 @@ fun CartScreen(
                             Spacer(modifier = Modifier.height(20.dp))
                             Button(
                                 onClick = {
-                                    if (cartTempAddress.isNotBlank()) {
+                                    if (!isAddressInServiceArea(cartTempAddress, appConfig)) {
+                                        Toast.makeText(context, "Service not available in this area or pin code.", Toast.LENGTH_LONG).show()
+                                    } else if (cartDistanceIssue != null || cartDeliveryDistanceKm <= 0.0) {
+                                        Toast.makeText(context, cartDistanceIssue ?: "Please select a detected delivery location.", Toast.LENGTH_LONG).show()
+                                    } else if (cartTempAddress.isNotBlank()) {
                                         viewModel.updateAddress(cartTempAddress, cartTempAddressLat, cartTempAddressLng)
                                         cartCheckoutStep = 2
                                     } else {
@@ -3590,6 +3822,21 @@ fun CartScreen(
                             // Razorpay Payment Button
                             Button(
                                 onClick = {
+                                    val overStockItem = computedItems.firstOrNull { (cartItem, product) ->
+                                        cartItem.quantity > product.stockQuantity
+                                    }
+                                    if (overStockItem != null) {
+                                        Toast.makeText(context, "Only ${overStockItem.second.stockQuantity} products are available.", Toast.LENGTH_LONG).show()
+                                        return@Button
+                                    }
+                                    if (!isAddressInServiceArea(cartTempAddress, appConfig)) {
+                                        Toast.makeText(context, "Service not available in this area or pin code.", Toast.LENGTH_LONG).show()
+                                        return@Button
+                                    }
+                                    if (cartDistanceIssue != null || cartDeliveryDistanceKm <= 0.0) {
+                                        Toast.makeText(context, cartDistanceIssue ?: "Please select a detected delivery location.", Toast.LENGTH_LONG).show()
+                                        return@Button
+                                    }
                                     val act = activity ?: (context as? Activity)
                                     if (act != null) {
                                         val summary = computedItems.joinToString(", ") { "${it.second.name} x${it.first.quantity}" }
@@ -3607,7 +3854,8 @@ fun CartScreen(
                                                 deliveryDistanceKm = cartDeliveryDistanceKm,
                                                 deliveryFixedCharge = cartDeliveryCharge.fixedCharge,
                                                 deliveryPerKmCharge = cartDeliveryCharge.perKmCharge,
-                                                deliveryCharge = cartDeliveryCharge.totalCharge
+                                                deliveryCharge = cartDeliveryCharge.totalCharge,
+                                                productQuantities = computedItems.associate { it.second.id to it.first.quantity }
                                             )
                                         )
                                         try {
@@ -3745,6 +3993,8 @@ fun CartItemRow(
     onRemove: () -> Unit
 ) {
     val primaryPhotoUrl = product.primaryPhotoUrl()
+    val isOutOfStock = product.stockQuantity <= 0
+    val isOverStock = product.stockQuantity > 0 && cartItem.quantity > product.stockQuantity
 
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -3767,7 +4017,7 @@ fun CartItemRow(
             ) {
                 if (primaryPhotoUrl.isNotBlank()) {
                     AsyncImage(
-                        model = primaryPhotoUrl,
+                        model = resolveProductImageModel(LocalContext.current, primaryPhotoUrl),
                         contentDescription = product.name,
                         modifier = Modifier.fillMaxSize(),
                         contentScale = ContentScale.Crop,
@@ -3809,27 +4059,61 @@ fun CartItemRow(
                     text = "₹${product.price} each",
                     fontSize = 13.sp,
                     fontWeight = FontWeight.Bold,
-                    color = DarkGreenPrimary
+                    color = if (isOutOfStock) MutedText else DarkGreenPrimary
                 )
+                if (isOutOfStock) {
+                    Text(
+                        text = "Out of Stock",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Black,
+                        color = AccentRed
+                    )
+                } else if (isOverStock) {
+                    Text(
+                        text = "Only ${product.stockQuantity} in stock",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = AccentRed
+                    )
+                }
             }
 
             // Quantity adjusters
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.background(SoftGrey, shape = RoundedCornerShape(14.dp))
-            ) {
-                IconButton(onClick = onDecrease, modifier = Modifier.size(32.dp)) {
-                    Icon(Icons.Default.Remove, contentDescription = "Minus", tint = DarkGreenPrimary, modifier = Modifier.size(16.dp))
+            if (isOutOfStock) {
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = AccentRed.copy(alpha = 0.12f)),
+                    shape = RoundedCornerShape(14.dp)
+                ) {
+                    Text(
+                        text = "Out of Stock",
+                        color = AccentRed,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Black,
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp)
+                    )
                 }
-                Text(
-                    text = cartItem.quantity.toString(),
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 14.sp,
-                    modifier = Modifier.padding(horizontal = 4.dp),
-                    color = RichBlack
-                )
-                IconButton(onClick = onIncrease, modifier = Modifier.size(32.dp)) {
-                    Icon(Icons.Default.Add, contentDescription = "Plus", tint = DarkGreenPrimary, modifier = Modifier.size(16.dp))
+            } else {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.background(SoftGrey, shape = RoundedCornerShape(14.dp))
+                ) {
+                    IconButton(onClick = onDecrease, modifier = Modifier.size(32.dp)) {
+                        Icon(Icons.Default.Remove, contentDescription = "Minus", tint = DarkGreenPrimary, modifier = Modifier.size(16.dp))
+                    }
+                    Text(
+                        text = cartItem.quantity.toString(),
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 14.sp,
+                        modifier = Modifier.padding(horizontal = 4.dp),
+                        color = RichBlack
+                    )
+                    IconButton(
+                        onClick = onIncrease,
+                        enabled = cartItem.quantity < product.stockQuantity,
+                        modifier = Modifier.size(32.dp)
+                    ) {
+                        Icon(Icons.Default.Add, contentDescription = "Plus", tint = DarkGreenPrimary, modifier = Modifier.size(16.dp))
+                    }
                 }
             }
 
@@ -4170,7 +4454,7 @@ fun OrdersScreen(viewModel: BazaarViewModel) {
                                         val photoUrl = matchingProduct?.primaryPhotoUrl().orEmpty()
                                         if (photoUrl.isNotBlank()) {
                                             AsyncImage(
-                                                model = photoUrl,
+                                                model = resolveProductImageModel(LocalContext.current, photoUrl),
                                                 contentDescription = matchingProduct?.name ?: line.name,
                                                 modifier = Modifier
                                                     .fillMaxSize()
@@ -5365,6 +5649,8 @@ fun DirectBuyCheckoutDialog(
 ) {
     val context = LocalContext.current
     val user by viewModel.currentUser.collectAsState()
+    val appConfig by viewModel.appConfig.collectAsState()
+    val allUsers by viewModel.allUsers.collectAsState()
     var step by remember(product.id) { mutableStateOf(1) }
     var address by remember(product.id, user?.savedAddress) { mutableStateOf(user?.savedAddress ?: "") }
     var addressLat by remember(product.id, user?.savedAddressLat) { mutableStateOf(user?.savedAddressLat ?: 0.0) }
@@ -5375,7 +5661,23 @@ fun DirectBuyCheckoutDialog(
     val appliedCoupon = if (couponApplied) viewModel.validateCoupon(couponText) else null
     val discountAmount = product.price * ((appliedCoupon?.discountPercent ?: 0) / 100.0)
     val payableBeforeDelivery = (product.price - discountAmount).coerceAtLeast(0.0)
-    val deliveryDistanceKm = estimateDeliveryDistanceKm(orderId)
+    val seller = allUsers.find { it.email.equals(product.sellerEmail, ignoreCase = true) }
+    val distanceIssue = missingDistanceReason(
+        seller?.shopAddressLat ?: 0.0,
+        seller?.shopAddressLng ?: 0.0,
+        addressLat,
+        addressLng
+    )
+    val deliveryDistanceKm = if (distanceIssue == null) {
+        calculateDistanceKm(
+            seller?.shopAddressLat ?: 0.0,
+            seller?.shopAddressLng ?: 0.0,
+            addressLat,
+            addressLng
+        )
+    } else {
+        0.0
+    }
     val deliveryCharge = calculateDeliveryCharge(payableBeforeDelivery, deliveryDistanceKm)
     val finalAmount = payableBeforeDelivery + deliveryCharge.totalCharge
 
@@ -5428,7 +5730,11 @@ fun DirectBuyCheckoutDialog(
                         Spacer(modifier = Modifier.height(16.dp))
                         Button(
                             onClick = {
-                                if (address.isBlank()) {
+                                if (!isAddressInServiceArea(address, appConfig)) {
+                                    Toast.makeText(context, "Service not available in this area or pin code.", Toast.LENGTH_LONG).show()
+                                } else if (distanceIssue != null || deliveryDistanceKm <= 0.0) {
+                                    Toast.makeText(context, distanceIssue ?: "Please select a detected delivery location.", Toast.LENGTH_LONG).show()
+                                } else if (address.isBlank()) {
                                     Toast.makeText(context, "Address cannot be empty", Toast.LENGTH_SHORT).show()
                                 } else {
                                     viewModel.updateAddress(address, addressLat, addressLng)
@@ -5510,6 +5816,18 @@ fun DirectBuyCheckoutDialog(
                         Spacer(modifier = Modifier.height(16.dp))
                         Button(
                             onClick = {
+                                if (product.stockQuantity <= 0) {
+                                    Toast.makeText(context, "Only ${product.stockQuantity} products are available.", Toast.LENGTH_LONG).show()
+                                    return@Button
+                                }
+                                if (!isAddressInServiceArea(address, appConfig)) {
+                                    Toast.makeText(context, "Service not available in this area or pin code.", Toast.LENGTH_LONG).show()
+                                    return@Button
+                                }
+                                if (distanceIssue != null || deliveryDistanceKm <= 0.0) {
+                                    Toast.makeText(context, distanceIssue ?: "Please select a detected delivery location.", Toast.LENGTH_LONG).show()
+                                    return@Button
+                                }
                                 val act = activity ?: (context as? Activity)
                                 if (act == null) {
                                     Toast.makeText(context, "Payment unavailable", Toast.LENGTH_SHORT).show()
@@ -5530,7 +5848,8 @@ fun DirectBuyCheckoutDialog(
                                         deliveryFixedCharge = deliveryCharge.fixedCharge,
                                         deliveryPerKmCharge = deliveryCharge.perKmCharge,
                                         deliveryCharge = deliveryCharge.totalCharge,
-                                        clearCartAfterCheckout = false
+                                        clearCartAfterCheckout = false,
+                                        productQuantities = mapOf(product.id to 1)
                                     )
                                 )
                                 try {
@@ -5599,6 +5918,7 @@ fun ProductDetailPane(
     val activity = context as? MainActivity
     var isFaved = viewModel.isWishlisted(product.id)
     val user by viewModel.currentUser.collectAsState()
+    val appConfig by viewModel.appConfig.collectAsState()
     val allUsers by viewModel.allUsers.collectAsState()
     val seller = allUsers.find { it.email.equals(product.sellerEmail, ignoreCase = true) }
     val sellerDisplayName = seller?.shopName?.ifBlank { seller.name }?.ifBlank { "ZVB Certified Seller" } ?: "ZVB Certified Seller"
@@ -5644,7 +5964,23 @@ fun ProductDetailPane(
     val discountPercent = appliedCoupon?.discountPercent ?: 0
     val discountAmount = product.price * (discountPercent / 100.0)
     val payableBeforeDelivery = (product.price - discountAmount).coerceAtLeast(0.0)
-    val deliveryDistanceKm = estimateDeliveryDistanceKm(directOrderId)
+    val sellerForDistance = allUsers.find { it.email.equals(product.sellerEmail, ignoreCase = true) }
+    val directDistanceIssue = missingDistanceReason(
+        sellerForDistance?.shopAddressLat ?: 0.0,
+        sellerForDistance?.shopAddressLng ?: 0.0,
+        tempAddressLat,
+        tempAddressLng
+    )
+    val deliveryDistanceKm = if (directDistanceIssue == null) {
+        calculateDistanceKm(
+            sellerForDistance?.shopAddressLat ?: 0.0,
+            sellerForDistance?.shopAddressLng ?: 0.0,
+            tempAddressLat,
+            tempAddressLng
+        )
+    } else {
+        0.0
+    }
     val deliveryCharge = calculateDeliveryCharge(payableBeforeDelivery, deliveryDistanceKm)
     val finalTotalAmount = payableBeforeDelivery + deliveryCharge.totalCharge
 
@@ -5691,9 +6027,9 @@ fun ProductDetailPane(
                 ) {
                     if (carouselImages.isNotEmpty() && page < carouselImages.size) {
                         val currentImg = carouselImages[page]
-                        if (currentImg.startsWith("http://") || currentImg.startsWith("https://") || currentImg.isNotBlank()) {
+                        if (currentImg.isNotBlank()) {
                             AsyncImage(
-                                model = currentImg,
+                                model = resolveProductImageModel(LocalContext.current, currentImg),
                                 contentDescription = product.name,
                                 modifier = Modifier.fillMaxSize(),
                                 contentScale = ContentScale.Crop,
@@ -6079,11 +6415,12 @@ fun ProductDetailPane(
                         Spacer(modifier = Modifier.width(8.dp))
                         Button(
                             onClick = {
-                                if (pincodeText.length >= 5) {
-                                    pincodeStatus = if (pincodeText.startsWith("5") || pincodeText.toIntOrNull()?.let { it % 2 == 0 } == true) {
-                                        "⚡ Super-Fast PLUS Delivery by Tomorrow morning 10:00 AM (Free!)"
+                                val pincode = pincodeText.filter(Char::isDigit)
+                                if (pincode.length >= 5) {
+                                    pincodeStatus = if (isPincodeInServiceArea(pincode, appConfig)) {
+                                        "Delivery available in this pin code."
                                     } else {
-                                        "Standard Care Delivery: Free Delivery in 2 Days."
+                                        "Service not available in this area or pin code."
                                     }
                                 } else {
                                     pincodeStatus = "Invalid pincode. Enter at least 5 digits."
@@ -6103,7 +6440,7 @@ fun ProductDetailPane(
                             text = pincodeStatus,
                             fontSize = 11.sp,
                             fontWeight = FontWeight.Bold,
-                            color = if (pincodeStatus.contains("⚡")) DarkGreenPrimary else AccentRed
+                            color = if (pincodeStatus.startsWith("Delivery available")) DarkGreenPrimary else AccentRed
                         )
                     }
                 }
@@ -6266,9 +6603,11 @@ fun ProductDetailPane(
                 // Add to Cart with mini scale-up indicator
                 Button(
                     onClick = {
-                        viewModel.addToCart(product)
-                        Toast.makeText(context, "Added ${product.name} to Cart!", Toast.LENGTH_SHORT).show()
+                        if (viewModel.addToCart(product)) {
+                            Toast.makeText(context, "Added ${product.name} to Cart!", Toast.LENGTH_SHORT).show()
+                        }
                     },
+                    enabled = product.stockQuantity > 0,
                     modifier = Modifier
                         .weight(1f)
                         .height(50.dp)
@@ -6279,19 +6618,24 @@ fun ProductDetailPane(
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Icon(Icons.Default.ShoppingCart, contentDescription = "", tint = DarkGreenPrimary, modifier = Modifier.size(18.dp))
                         Spacer(modifier = Modifier.width(6.dp))
-                        Text("Add to Cart", color = DarkGreenPrimary, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                        Text(if (product.stockQuantity > 0) "Add to Cart" else "Out of Stock", color = DarkGreenPrimary, fontWeight = FontWeight.Bold, fontSize = 13.sp)
                     }
                 }
 
                 // Buy Now Direct Purchase
                 Button(
                     onClick = {
-                        directOrderId = "ZVB-" + java.util.UUID.randomUUID().toString().uppercase().take(8)
-                        val formatter = java.text.SimpleDateFormat("MMM dd, yyyy", java.util.Locale.US)
-                        directDeliveryDate = formatter.format(System.currentTimeMillis() + 86400000) // tomorrow!
-                        showCheckoutDialog = true
-                        checkoutStep = 1
+                        if (product.stockQuantity <= 0) {
+                            Toast.makeText(context, "Only ${product.stockQuantity} products are available.", Toast.LENGTH_LONG).show()
+                        } else {
+                            directOrderId = "ZVB-" + java.util.UUID.randomUUID().toString().uppercase().take(8)
+                            val formatter = java.text.SimpleDateFormat("MMM dd, yyyy", java.util.Locale.US)
+                            directDeliveryDate = formatter.format(System.currentTimeMillis() + 86400000) // tomorrow!
+                            showCheckoutDialog = true
+                            checkoutStep = 1
+                        }
                     },
+                    enabled = product.stockQuantity > 0,
                     modifier = Modifier
                         .weight(1f)
                         .height(50.dp)
@@ -6302,7 +6646,7 @@ fun ProductDetailPane(
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Icon(Icons.Default.OfflineBolt, contentDescription = "", tint = CustomWhite, modifier = Modifier.size(18.dp))
                         Spacer(modifier = Modifier.width(6.dp))
-                        Text("Buy Now", color = CustomWhite, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                        Text(if (product.stockQuantity > 0) "Buy Now" else "Out of Stock", color = CustomWhite, fontWeight = FontWeight.Bold, fontSize = 13.sp)
                     }
                 }
             }
@@ -6388,7 +6732,11 @@ fun ProductDetailPane(
                             Spacer(modifier = Modifier.height(20.dp))
                             Button(
                                 onClick = {
-                                    if (tempAddress.isNotBlank()) {
+                                    if (!isAddressInServiceArea(tempAddress, appConfig)) {
+                                        Toast.makeText(context, "Service not available in this area or pin code.", Toast.LENGTH_LONG).show()
+                                    } else if (directDistanceIssue != null || deliveryDistanceKm <= 0.0) {
+                                        Toast.makeText(context, directDistanceIssue ?: "Please select a detected delivery location.", Toast.LENGTH_LONG).show()
+                                    } else if (tempAddress.isNotBlank()) {
                                         viewModel.updateAddress(tempAddress, tempAddressLat, tempAddressLng)
                                         checkoutStep = 2
                                     } else {
@@ -6498,6 +6846,18 @@ fun ProductDetailPane(
                             Spacer(modifier = Modifier.height(16.dp))
                             Button(
                                 onClick = {
+                                    if (product.stockQuantity <= 0) {
+                                        Toast.makeText(context, "Only ${product.stockQuantity} products are available.", Toast.LENGTH_LONG).show()
+                                        return@Button
+                                    }
+                                    if (!isAddressInServiceArea(tempAddress, appConfig)) {
+                                        Toast.makeText(context, "Service not available in this area or pin code.", Toast.LENGTH_LONG).show()
+                                        return@Button
+                                    }
+                                    if (directDistanceIssue != null || deliveryDistanceKm <= 0.0) {
+                                        Toast.makeText(context, directDistanceIssue ?: "Please select a detected delivery location.", Toast.LENGTH_LONG).show()
+                                        return@Button
+                                    }
                                     val act = activity ?: (context as? Activity)
                                     if (act != null) {
                                         val summary = "${product.name} x1"
@@ -6516,7 +6876,8 @@ fun ProductDetailPane(
                                                 deliveryFixedCharge = deliveryCharge.fixedCharge,
                                                 deliveryPerKmCharge = deliveryCharge.perKmCharge,
                                                 deliveryCharge = deliveryCharge.totalCharge,
-                                                clearCartAfterCheckout = false
+                                                clearCartAfterCheckout = false,
+                                                productQuantities = mapOf(product.id to 1)
                                             )
                                         )
                                         try {
@@ -6715,6 +7076,7 @@ fun DeviceRow(
 enum class SellerTab(val title: String, val icon: ImageVector) {
     Dashboard("Dashboard", Icons.Default.Dashboard),
     Products("My Inventory", Icons.Default.Inventory2),
+    Wallet("Withdraw", Icons.Default.AccountBalanceWallet),
     Profile("Shop Profile", Icons.Default.Storefront)
 }
 
@@ -6727,6 +7089,7 @@ fun SellerPanelScreen(
     val allOrders by viewModel.allOrders.collectAsState()
     val allProducts by viewModel.allProducts.collectAsState()
     val allUsers by viewModel.allUsers.collectAsState()
+    val withdrawRequests by viewModel.withdrawRequests.collectAsState()
     val context = LocalContext.current
 
     var activeTab by remember { mutableStateOf(SellerTab.Dashboard) }
@@ -6739,15 +7102,29 @@ fun SellerPanelScreen(
     var newProdOrigPrice by remember { mutableStateOf("") }
     var newProdCat by remember { mutableStateOf("Electronics") }
     var newProdDesc by remember { mutableStateOf("") }
+    var newProdStock by remember { mutableStateOf("") }
     var imageList by remember { mutableStateOf(listOf<String>()) }
+    var editingProduct by remember { mutableStateOf<Product?>(null) }
+    var deletingProduct by remember { mutableStateOf<Product?>(null) }
     var showProductImageSelectorDialog by remember { mutableStateOf(false) }
 
     val productPhotoLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.GetContent()
+        contract = ActivityResultContracts.OpenDocument()
     ) { uri: Uri? ->
         if (uri != null) {
+            runCatching {
+                context.contentResolver.takePersistableUriPermission(
+                    uri,
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION
+                )
+            }
             val imageId = UUID.randomUUID().toString().take(6)
-            viewModel.uploadProductImageToCloudinary(uri, currentUser?.email ?: "unknown", imageId) { url ->
+            viewModel.uploadProductImageToCloudinary(
+                uri,
+                currentUser?.email ?: "unknown",
+                imageId,
+                onError = { message -> Toast.makeText(context, message, Toast.LENGTH_LONG).show() }
+            ) { url ->
                 imageList = imageList + url
                 showProductImageSelectorDialog = false
                 Toast.makeText(context, "Product image uploaded successfully!", Toast.LENGTH_SHORT).show()
@@ -6843,36 +7220,7 @@ fun SellerPanelScreen(
                     val sellerProductsForCurrentSeller = allProducts.filter {
                         sellerEmail.isNotBlank() && it.sellerEmail.equals(sellerEmail, ignoreCase = true)
                     }
-                    val sellerProductNames = sellerProductsForCurrentSeller.map { it.name }
-                    
-                    val sellerOrders = if (isVerified) {
-                        allOrders.mapNotNull { order ->
-                            val itemsList = order.itemsSummary.split(", ")
-                            val sellerItems = itemsList.filter { itemStr ->
-                                val parts = itemStr.split(" x")
-                                val productName = parts.getOrNull(0)?.trim() ?: ""
-                                sellerProductNames.any { it.equals(productName, ignoreCase = true) }
-                            }
-                            if (sellerItems.isNotEmpty()) {
-                                val sellerSummary = sellerItems.joinToString(", ")
-                                val subtotal = sellerItems.sumOf { itemStr ->
-                                    val parts = itemStr.split(" x")
-                                    val productName = parts.getOrNull(0)?.trim() ?: ""
-                                    val quantity = parts.getOrNull(1)?.trim()?.toIntOrNull() ?: 1
-                                    val product = sellerProductsForCurrentSeller.find { it.name.equals(productName, ignoreCase = true) }
-                                    (product?.price ?: 0.0) * quantity
-                                }
-                                order.copy(
-                                    itemsSummary = sellerSummary,
-                                    totalAmount = subtotal
-                                )
-                            } else {
-                                null
-                            }
-                        }
-                    } else {
-                        emptyList()
-                    }
+                    val sellerOrders = sellerScopedOrders(sellerProductsForCurrentSeller, allOrders)
                     val pendingCount = sellerOrders.count { 
                         it.status == "Processing" || it.status == "Pending" || it.status.isBlank() || it.status == "Seller Reject Requested"
                     }
@@ -7458,7 +7806,7 @@ fun SellerPanelScreen(
                                             ) {
                                                 if (sellerProductPhoto.isNotBlank()) {
                                                     AsyncImage(
-                                                        model = sellerProductPhoto,
+                                                        model = resolveProductImageModel(LocalContext.current, sellerProductPhoto),
                                                         contentDescription = prod.name,
                                                         modifier = Modifier.fillMaxSize(),
                                                         contentScale = ContentScale.Crop,
@@ -7481,6 +7829,31 @@ fun SellerPanelScreen(
                                                     Spacer(modifier = Modifier.width(8.dp))
                                                     Text("₹${prod.originalPrice}", textDecoration = TextDecoration.LineThrough, fontSize = 11.sp, color = MutedText)
                                                 }
+                                                Text(
+                                                    if (prod.stockQuantity == 0) "Out of Stock" else "Stock: ${prod.stockQuantity}",
+                                                    color = if (prod.stockQuantity == 0) AccentRed else DarkGreenPrimary,
+                                                    fontSize = 11.sp,
+                                                    fontWeight = FontWeight.Bold
+                                                )
+                                            }
+                                            Column {
+                                                IconButton(onClick = {
+                                                    editingProduct = prod
+                                                    newProdName = prod.name
+                                                    newProdPrice = prod.price.toString()
+                                                    newProdOrigPrice = prod.originalPrice.toString()
+                                                    newProdCat = prod.category
+                                                    newProdDesc = prod.description
+                                                    newProdStock = prod.stockQuantity.toString()
+                                                    imageList = listOf(prod.imageUrlName) +
+                                                        prod.extraImages.split(",").filter { it.isNotBlank() }
+                                                    showAddProductDialog = true
+                                                }) {
+                                                    Icon(Icons.Default.Edit, "Edit product", tint = DarkGreenPrimary)
+                                                }
+                                                IconButton(onClick = { deletingProduct = prod }) {
+                                                    Icon(Icons.Default.Delete, "Delete product", tint = AccentRed)
+                                                }
                                             }
                                         }
                                     }
@@ -7490,41 +7863,54 @@ fun SellerPanelScreen(
                     }
                 }
 
+                SellerTab.Wallet -> {
+                    val sellerEmail = currentUser?.email.orEmpty()
+                    val sellerProducts = allProducts.filter { it.sellerEmail.equals(sellerEmail, true) }
+                    val sellerNames = sellerProducts.map { it.name.lowercase() }
+                    val earnings = allOrders.filter { it.status == "Delivered" }.sumOf { order ->
+                        order.itemsSummary.split(", ").sumOf { line ->
+                            val name = line.substringBeforeLast(" x").trim()
+                            val qty = line.substringAfterLast(" x", "1").toIntOrNull() ?: 1
+                            sellerProducts.find { it.name.equals(name, true) }?.price?.times(qty) ?: 0.0
+                        }
+                    }
+                    val requested = withdrawRequests.filter {
+                        it.deliveryPartnerEmail.equals(sellerEmail, true) && it.accountRole == "Seller" && it.status != "Failed"
+                    }.sumOf { it.amount }
+                    val available = (earnings - requested).coerceAtLeast(0.0)
+                    var amount by remember { mutableStateOf("") }
+                    val bank = currentUser?.sellerBankAccount.orEmpty()
+                    Column(
+                        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        Text("Available Balance: ₹${String.format("%.2f", available)}", fontSize = 24.sp, fontWeight = FontWeight.Black, color = DarkGreenPrimary)
+                        OutlinedTextField(value = amount, onValueChange = { amount = it }, label = { Text("Withdraw amount (₹)") }, modifier = Modifier.fillMaxWidth())
+                        OutlinedTextField(value = bank, onValueChange = {}, readOnly = true, label = { Text("Registered bank details") }, modifier = Modifier.fillMaxWidth())
+                        Button(
+                            onClick = {
+                                val value = amount.toDoubleOrNull()
+                                if (bank.isBlank()) Toast.makeText(context, "No registered bank details found.", Toast.LENGTH_LONG).show()
+                                else if (value == null || value <= 0 || value > available) Toast.makeText(context, "Enter an amount up to ₹${String.format("%.2f", available)}.", Toast.LENGTH_LONG).show()
+                                else {
+                                    viewModel.applyWithdrawal(sellerEmail, value, bank, "Seller")
+                                    amount = ""
+                                    Toast.makeText(context, "Withdrawal scheduled automatically.", Toast.LENGTH_SHORT).show()
+                                }
+                            },
+                            enabled = available > 0 && bank.isNotBlank(),
+                            modifier = Modifier.fillMaxWidth()
+                        ) { Text("Withdraw") }
+                    }
+                }
+
                 SellerTab.Profile -> {
                     val isVerified = currentUser?.isSellerVerified == true
                     val sellerEmail = currentUser?.email.orEmpty()
                     val sellerProductsForCurrentSeller = allProducts.filter {
                         sellerEmail.isNotBlank() && it.sellerEmail.equals(sellerEmail, ignoreCase = true)
                     }
-                    val sellerProductNames = sellerProductsForCurrentSeller.map { it.name }
-                    val sellerOrders = if (isVerified) {
-                        allOrders.mapNotNull { order ->
-                            val itemsList = order.itemsSummary.split(", ")
-                            val sellerItems = itemsList.filter { itemStr ->
-                                val parts = itemStr.split(" x")
-                                val productName = parts.getOrNull(0)?.trim() ?: ""
-                                sellerProductNames.any { it.equals(productName, ignoreCase = true) }
-                            }
-                            if (sellerItems.isNotEmpty()) {
-                                val sellerSummary = sellerItems.joinToString(", ")
-                                val subtotal = sellerItems.sumOf { itemStr ->
-                                    val parts = itemStr.split(" x")
-                                    val productName = parts.getOrNull(0)?.trim() ?: ""
-                                    val quantity = parts.getOrNull(1)?.trim()?.toIntOrNull() ?: 1
-                                    val product = sellerProductsForCurrentSeller.find { it.name.equals(productName, ignoreCase = true) }
-                                    (product?.price ?: 0.0) * quantity
-                                }
-                                order.copy(
-                                    itemsSummary = sellerSummary,
-                                    totalAmount = subtotal
-                                )
-                            } else {
-                                null
-                            }
-                        }
-                    } else {
-                        emptyList()
-                    }
+                    val sellerOrders = sellerScopedOrders(sellerProductsForCurrentSeller, allOrders)
 
                     val deliveredSellerOrders = sellerOrders.filter { it.status.equals("Delivered", ignoreCase = true) }
                     val walletBalance = deliveredSellerOrders.sumOf { it.totalAmount }
@@ -7803,6 +8189,15 @@ fun SellerPanelScreen(
                         singleLine = false
                     )
 
+                    OutlinedTextField(
+                        value = newProdStock,
+                        onValueChange = { if (it.all(Char::isDigit)) newProdStock = it },
+                        label = { Text("Stock Quantity (Mandatory)") },
+                        modifier = Modifier.fillMaxWidth().testTag("add_product_stock"),
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
+                    )
+
                     // Multiple Images Adding Option (Direct Mock Upload)
                     Text(
                         text = "Product Gallery (Direct Mock Upload)",
@@ -7817,7 +8212,7 @@ fun SellerPanelScreen(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .height(100.dp)
-                                .clickable { productPhotoLauncher.launch("image/*") },
+                                .clickable { productPhotoLauncher.launch(arrayOf("image/*")) },
                             colors = CardDefaults.cardColors(containerColor = SoftGrey.copy(alpha = 0.3f)),
                             border = BorderStroke(1.dp, SoftGrey),
                             shape = RoundedCornerShape(10.dp)
@@ -7871,7 +8266,7 @@ fun SellerPanelScreen(
 
                     OutlinedButton(
                         onClick = {
-                            productPhotoLauncher.launch("image/*")
+                            productPhotoLauncher.launch(arrayOf("image/*"))
                         },
                         colors = ButtonDefaults.outlinedButtonColors(contentColor = DarkGreenPrimary),
                         border = BorderStroke(1.dp, DarkGreenPrimary),
@@ -7889,30 +8284,36 @@ fun SellerPanelScreen(
                         onClick = {
                             val price = newProdPrice.toDoubleOrNull()
                             val origPrice = newProdOrigPrice.toDoubleOrNull()
+                            val stock = newProdStock.toIntOrNull()
                             val extraImagesStr = imageList.joinToString(",")
 
-                            if (newProdName.isNotBlank() && price != null && origPrice != null && newProdCat.isNotBlank() && imageList.isNotEmpty()) {
-                                viewModel.addProduct(
-                                    newProdName,
-                                    price,
-                                    origPrice,
-                                    newProdCat,
-                                    newProdDesc,
-                                    currentUser?.email ?: "",
-                                    extraImagesStr
-                                )
+                            if (newProdName.isNotBlank() && price != null && origPrice != null && stock != null && stock >= 0 && newProdCat.isNotBlank() && imageList.isNotEmpty()) {
+                                val existing = editingProduct
+                                if (existing == null) {
+                                    viewModel.addProduct(newProdName, price, origPrice, newProdCat, newProdDesc, currentUser?.email ?: "", extraImagesStr, stock)
+                                } else {
+                                    viewModel.updateProduct(existing.copy(
+                                        name = newProdName, price = price, originalPrice = origPrice,
+                                        category = newProdCat, description = newProdDesc,
+                                        imageUrlName = imageList.firstOrNull().orEmpty(),
+                                        extraImages = imageList.drop(1).joinToString(","),
+                                        stockQuantity = stock
+                                    ))
+                                }
                                 showAddProductDialog = false
+                                editingProduct = null
                                 // Reset form
                                 newProdName = ""
                                 newProdPrice = ""
                                 newProdOrigPrice = ""
                                 newProdDesc = ""
+                                newProdStock = ""
                                 imageList = emptyList()
-                                Toast.makeText(context, "Product listed successfully on the Bazaar!", Toast.LENGTH_SHORT).show()
+                                Toast.makeText(context, "Product saved successfully.", Toast.LENGTH_SHORT).show()
                             } else if (imageList.isEmpty()) {
                                 Toast.makeText(context, "Please upload at least one product photo.", Toast.LENGTH_SHORT).show()
                             } else {
-                                Toast.makeText(context, "Please enter valid entries and prices.", Toast.LENGTH_SHORT).show()
+                                Toast.makeText(context, "Please enter valid prices and mandatory stock quantity.", Toast.LENGTH_SHORT).show()
                             }
                         },
                         colors = ButtonDefaults.buttonColors(containerColor = DarkGreenPrimary),
@@ -7924,6 +8325,21 @@ fun SellerPanelScreen(
                 }
             }
         }
+    }
+
+    deletingProduct?.let { product ->
+        AlertDialog(
+            onDismissRequest = { deletingProduct = null },
+            title = { Text("Delete product?") },
+            text = { Text("${product.name} will be removed from the marketplace.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    viewModel.deleteProduct(product)
+                    deletingProduct = null
+                }) { Text("Delete", color = AccentRed) }
+            },
+            dismissButton = { TextButton(onClick = { deletingProduct = null }) { Text("Cancel") } }
+        )
     }
 }
 

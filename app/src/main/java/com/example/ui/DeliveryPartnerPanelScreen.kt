@@ -30,6 +30,7 @@ import com.example.data.User
 import com.example.data.calculateDeliveryCharge
 import com.example.data.estimateDeliveryDistanceKm
 import com.example.data.estimateItemAmountFromOrderTotal
+import com.example.data.isAddressInServiceArea
 import com.example.ui.theme.*
 import com.example.viewmodel.BazaarViewModel
 
@@ -40,6 +41,7 @@ fun DeliveryPartnerPanelScreen(viewModel: BazaarViewModel, onLogout: () -> Unit)
     val currentUser by viewModel.currentUser.collectAsState()
     val allOrders by viewModel.allOrders.collectAsState()
     val allUsers by viewModel.allUsers.collectAsState()
+    val appConfig by viewModel.appConfig.collectAsState()
 
     var activeTab by remember { mutableStateOf("Dashboard") } // "Dashboard", "Order Requests", "Active Orders"
 
@@ -55,13 +57,15 @@ fun DeliveryPartnerPanelScreen(viewModel: BazaarViewModel, onLogout: () -> Unit)
     val todayCanceled = myOrders.count { it.status == "Cancelled" }
 
     // Order Requests: seller accepted orders remain open to all delivery partners for 24 hours.
-    val availableRequests = allOrders.filter { 
+    val candidateRequests = allOrders.filter {
         it.deliveryPartnerEmail.isBlank() && 
         it.status != "Cancelled" && 
         it.status != "Delivered" &&
         (it.status == "Shipping Ready" || it.status == "Ready for Delivery" || it.status == "Accepted" || it.sellerConfirmed) &&
         (System.currentTimeMillis() - it.orderDate) <= 24 * 60 * 60 * 1000
     }
+    val availableRequests = candidateRequests.filter { isAddressInServiceArea(it.deliveryAddress, appConfig) }
+    val hasOutOfAreaRequests = candidateRequests.size > availableRequests.size
 
     // Active accepted orders
     val activeAcceptedOrders = myOrders.filter { 
@@ -374,8 +378,16 @@ fun DeliveryPartnerPanelScreen(viewModel: BazaarViewModel, onLogout: () -> Unit)
                                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                                     Icon(Icons.Default.Inbox, contentDescription = "", tint = MutedText, modifier = Modifier.size(48.dp))
                                     Spacer(modifier = Modifier.height(8.dp))
-                                    Text("No New Order Requests", fontWeight = FontWeight.Bold, fontSize = 14.sp, color = RichBlack)
-                                    Text("Orders listed by sellers ready for dispatch will appear here.", fontSize = 11.sp, color = MutedText, textAlign = TextAlign.Center)
+                                    Text(
+                                        if (hasOutOfAreaRequests) "Service not available in this area or pin code." else "No New Order Requests",
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 14.sp,
+                                        color = if (hasOutOfAreaRequests) AccentRed else RichBlack,
+                                        textAlign = TextAlign.Center
+                                    )
+                                    if (!hasOutOfAreaRequests) {
+                                        Text("Orders listed by sellers ready for dispatch will appear here.", fontSize = 11.sp, color = MutedText, textAlign = TextAlign.Center)
+                                    }
                                 }
                             }
                         } else {
@@ -459,14 +471,14 @@ fun DeliveryPartnerPanelScreen(viewModel: BazaarViewModel, onLogout: () -> Unit)
                         
                         val totalEarnings = deliveredOrders.sumOf { calculateOrderEarning(it) }
                         
-                        val approvedWithdrawals = withdrawRequests.filter { it.deliveryPartnerEmail == currentUser?.email && it.status == "Approved" }.sumOf { it.amount }
-                        val pendingWithdrawals = withdrawRequests.filter { it.deliveryPartnerEmail == currentUser?.email && it.status == "Pending" }.sumOf { it.amount }
-                        val totalWithdrawn = approvedWithdrawals + pendingWithdrawals
+                        val totalWithdrawn = withdrawRequests.filter {
+                            it.deliveryPartnerEmail == currentUser?.email && it.accountRole == "DeliveryPartner" && it.status != "Failed"
+                        }.sumOf { it.amount }
                         
                         val availableBalance = (totalEarnings - totalWithdrawn).coerceAtLeast(0.0)
 
                         var withdrawAmount by remember { mutableStateOf("") }
-                        var bankDetails by remember { mutableStateOf("") }
+                        val bankDetails = currentUser?.deliveryBankAccount.orEmpty()
                         var amountError by remember { mutableStateOf<String?>(null) }
 
                         Column(
@@ -546,9 +558,10 @@ fun DeliveryPartnerPanelScreen(viewModel: BazaarViewModel, onLogout: () -> Unit)
                                     
                                     OutlinedTextField(
                                         value = bankDetails,
-                                        onValueChange = { bankDetails = it },
-                                        label = { Text("Bank Transfer Details") },
-                                        placeholder = { Text("Account Name, No, IFSC, Bank...") },
+                                        onValueChange = {},
+                                        readOnly = true,
+                                        label = { Text("Registered Bank Details") },
+                                        placeholder = { Text("No bank details registered") },
                                         modifier = Modifier.fillMaxWidth().testTag("withdraw_bank_input"),
                                         shape = RoundedCornerShape(8.dp),
                                         colors = TextFieldDefaults.colors(
@@ -569,10 +582,9 @@ fun DeliveryPartnerPanelScreen(viewModel: BazaarViewModel, onLogout: () -> Unit)
                                             } else if (bankDetails.isBlank()) {
                                                 Toast.makeText(context, "Please enter your bank transfer details", Toast.LENGTH_SHORT).show()
                                             } else {
-                                                viewModel.applyWithdrawal(currentUser?.email ?: "", amt, bankDetails)
-                                                Toast.makeText(context, "Withdraw request submitted successfully!", Toast.LENGTH_SHORT).show()
+                                                viewModel.applyWithdrawal(currentUser?.email ?: "", amt, bankDetails, "DeliveryPartner")
+                                                Toast.makeText(context, "Withdrawal scheduled automatically!", Toast.LENGTH_SHORT).show()
                                                 withdrawAmount = ""
-                                                bankDetails = ""
                                                 amountError = null
                                             }
                                         },
@@ -811,35 +823,6 @@ fun DeliveryPartnerPanelScreen(viewModel: BazaarViewModel, onLogout: () -> Unit)
                                         }
                                     }
 
-                                    if (!isVerified) {
-                                        Spacer(modifier = Modifier.height(12.dp))
-                                        Button(
-                                            onClick = {
-                                                viewModel.verifyDeliveryPartner(currentUser?.email ?: "", true)
-                                                Toast.makeText(context, "Admin Simulation: Profile verified successfully!", Toast.LENGTH_SHORT).show()
-                                            },
-                                            colors = ButtonDefaults.buttonColors(containerColor = DarkGreenPrimary),
-                                            shape = RoundedCornerShape(8.dp),
-                                            modifier = Modifier.fillMaxWidth().height(36.dp).testTag("verify_profile_bypass_button"),
-                                            contentPadding = PaddingValues(0.dp)
-                                        ) {
-                                            Text("Verify My Profile Instantly (Simulated Admin)", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = CustomWhite)
-                                        }
-                                    } else {
-                                        Spacer(modifier = Modifier.height(12.dp))
-                                        Button(
-                                            onClick = {
-                                                viewModel.verifyDeliveryPartner(currentUser?.email ?: "", false)
-                                                Toast.makeText(context, "Admin Simulation: Profile reset to Pending!", Toast.LENGTH_SHORT).show()
-                                            },
-                                            colors = ButtonDefaults.buttonColors(containerColor = AccentRed),
-                                            shape = RoundedCornerShape(8.dp),
-                                            modifier = Modifier.fillMaxWidth().height(36.dp).testTag("reset_profile_bypass_button"),
-                                            contentPadding = PaddingValues(0.dp)
-                                        ) {
-                                            Text("Reset to Pending (Simulated Admin)", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = CustomWhite)
-                                        }
-                                    }
                                 }
                             }
 

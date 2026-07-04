@@ -156,7 +156,8 @@ fun Product.toMap(): Map<String, Any> {
         "description" to description,
         "isFeatured" to isFeatured,
         "sellerEmail" to sellerEmail,
-        "extraImages" to extraImages
+        "extraImages" to extraImages,
+        "stockQuantity" to stockQuantity.coerceAtLeast(0)
     )
 }
 
@@ -172,7 +173,8 @@ fun Map<String, Any?>.toProduct(): Product {
         description = this["description"] as? String ?: "",
         isFeatured = this["isFeatured"] as? Boolean ?: false,
         sellerEmail = this["sellerEmail"] as? String ?: "",
-        extraImages = this["extraImages"] as? String ?: ""
+        extraImages = this["extraImages"] as? String ?: "",
+        stockQuantity = (this["stockQuantity"] as? Number)?.toInt()?.coerceAtLeast(0) ?: 100
     )
 }
 
@@ -200,7 +202,8 @@ fun Order.toMap(): Map<String, Any> {
         "sellerRejectRequested" to sellerRejectRequested,
         "sellerChangeDeliveryBoyRequested" to sellerChangeDeliveryBoyRequested,
         "paymentMode" to paymentMode,
-        "paymentTransactionId" to paymentTransactionId
+        "paymentTransactionId" to paymentTransactionId,
+        "productQuantities" to productQuantities
     )
 }
 
@@ -228,7 +231,8 @@ fun Map<String, Any?>.toOrder(): Order {
         sellerRejectRequested = this["sellerRejectRequested"] as? Boolean ?: false,
         sellerChangeDeliveryBoyRequested = this["sellerChangeDeliveryBoyRequested"] as? Boolean ?: false,
         paymentMode = this["paymentMode"] as? String ?: "COD",
-        paymentTransactionId = this["paymentTransactionId"] as? String ?: ""
+        paymentTransactionId = this["paymentTransactionId"] as? String ?: "",
+        productQuantities = this["productQuantities"] as? String ?: ""
     )
 }
 
@@ -245,7 +249,8 @@ data class PendingCheckout(
     val deliveryFixedCharge: Double = 0.0,
     val deliveryPerKmCharge: Double = 0.0,
     val deliveryCharge: Double = 0.0,
-    val clearCartAfterCheckout: Boolean = true
+    val clearCartAfterCheckout: Boolean = true,
+    val productQuantities: Map<Int, Int> = emptyMap()
 )
 
 sealed class AuthState {
@@ -265,6 +270,13 @@ class BazaarViewModel(application: Application) : AndroidViewModel(application) 
 
     private val _checkoutSuccessEvent = MutableSharedFlow<Boolean>(extraBufferCapacity = 1)
     val checkoutSuccessEvent: SharedFlow<Boolean> = _checkoutSuccessEvent.asSharedFlow()
+
+    private val _userMessages = MutableSharedFlow<String>(extraBufferCapacity = 8)
+    val userMessages: SharedFlow<String> = _userMessages.asSharedFlow()
+
+    private fun emitUserMessage(message: String) {
+        _userMessages.tryEmit(message)
+    }
 
     fun setPendingCheckout(info: PendingCheckout) {
         _pendingCheckout.value = info
@@ -296,56 +308,57 @@ class BazaarViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     private fun loadWithdrawRequests() {
-        val prefs = getApplication<Application>().getSharedPreferences("delivery_wallet_prefs", android.content.Context.MODE_PRIVATE)
-        val raw = prefs.getString("withdrawals", "") ?: ""
-        if (raw.isNotEmpty()) {
-            try {
-                val list = raw.split("||").filter { it.isNotBlank() }.map { chunk ->
-                    val parts = chunk.split(";;")
+        FirebaseFirestore.getInstance().collection("withdrawal_requests")
+            .addSnapshotListener { snapshot, error ->
+                if (error != null || snapshot == null) return@addSnapshotListener
+                _withdrawRequests.value = snapshot.documents.mapNotNull { doc ->
+                    val data = doc.data ?: return@mapNotNull null
                     WithdrawRequest(
-                        id = parts[0],
-                        deliveryPartnerEmail = parts[1],
-                        amount = parts[2].toDouble(),
-                        bankDetails = parts[3],
-                        status = parts[4],
-                        requestDate = parts[5].toLong()
+                        id = doc.id,
+                        deliveryPartnerEmail = data["accountEmail"] as? String
+                            ?: data["deliveryPartnerEmail"] as? String ?: "",
+                        amount = (data["amount"] as? Number)?.toDouble() ?: 0.0,
+                        bankDetails = data["bankDetails"] as? String ?: "",
+                        status = data["status"] as? String ?: "Scheduled",
+                        requestDate = (data["requestDate"] as? Number)?.toLong() ?: 0L,
+                        accountRole = data["accountRole"] as? String ?: "DeliveryPartner",
+                        scheduledAt = (data["scheduledAt"] as? Number)?.toLong() ?: 0L,
+                        payoutId = data["payoutId"] as? String ?: ""
                     )
-                }
-                _withdrawRequests.value = list
-            } catch (e: Exception) {
-                e.printStackTrace()
+                }.sortedByDescending { it.requestDate }
             }
-        }
     }
 
-    private fun saveWithdrawRequests(list: List<WithdrawRequest>) {
-        _withdrawRequests.value = list
-        val prefs = getApplication<Application>().getSharedPreferences("delivery_wallet_prefs", android.content.Context.MODE_PRIVATE)
-        val raw = list.joinToString("||") { req ->
-            "${req.id};;${req.deliveryPartnerEmail};;${req.amount};;${req.bankDetails};;${req.status};;${req.requestDate}"
-        }
-        prefs.edit().putString("withdrawals", raw).apply()
-    }
-
-    fun applyWithdrawal(email: String, amount: Double, bankDetails: String) {
+    fun applyWithdrawal(email: String, amount: Double, bankDetails: String, accountRole: String = "DeliveryPartner") {
+        val now = System.currentTimeMillis()
+        val delayHours = appConfig.value.payoutDelayHours.coerceAtLeast(0)
         val req = WithdrawRequest(
             id = "WD-" + System.currentTimeMillis().toString().takeLast(6),
             deliveryPartnerEmail = email,
             amount = amount,
             bankDetails = bankDetails,
-            status = "Pending",
-            requestDate = System.currentTimeMillis()
+            status = "Scheduled",
+            requestDate = now,
+            accountRole = accountRole,
+            scheduledAt = now + delayHours * 60L * 60L * 1000L
         )
-        val currentList = _withdrawRequests.value.toMutableList()
-        currentList.add(0, req)
-        saveWithdrawRequests(currentList)
+        FirebaseFirestore.getInstance().collection("withdrawal_requests").document(req.id).set(
+            mapOf(
+                "accountEmail" to req.deliveryPartnerEmail,
+                "accountRole" to req.accountRole,
+                "amount" to req.amount,
+                "bankDetails" to req.bankDetails,
+                "status" to req.status,
+                "requestDate" to req.requestDate,
+                "scheduledAt" to req.scheduledAt,
+                "payoutId" to req.payoutId
+            )
+        )
     }
 
     fun approveWithdrawal(requestId: String) {
-        val currentList = _withdrawRequests.value.map {
-            if (it.id == requestId) it.copy(status = "Approved") else it
-        }
-        saveWithdrawRequests(currentList)
+        FirebaseFirestore.getInstance().collection("withdrawal_requests").document(requestId)
+            .update("status", "Scheduled", "scheduledAt", System.currentTimeMillis())
     }
 
     private val _newlyRegisteredUser = MutableStateFlow<User?>(null)
@@ -356,8 +369,20 @@ class BazaarViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     // --- State: Products ---
-    val allProducts: StateFlow<List<Product>> = repository.getAllProducts()
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+    private val pendingProductEdits = MutableStateFlow<Map<Int, Product>>(emptyMap())
+
+    val allProducts: StateFlow<List<Product>> = combine(
+        repository.getAllProducts(),
+        pendingProductEdits
+    ) { remoteProducts, pending ->
+        if (pending.isEmpty()) {
+            remoteProducts
+        } else {
+            val remoteIds = remoteProducts.map { it.id }.toSet()
+            remoteProducts.map { product -> pending[product.id] ?: product } +
+                pending.values.filter { it.id !in remoteIds }
+        }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     private val _searchQuery = MutableStateFlow("")
     val searchQuery: StateFlow<String> = _searchQuery.asStateFlow()
@@ -522,24 +547,6 @@ class BazaarViewModel(application: Application) : AndroidViewModel(application) 
         try {
             val db = FirebaseFirestore.getInstance()
             
-            // Sync all products from Firestore to Room
-            db.collection("products").addSnapshotListener { snapshot, error ->
-                if (error != null) {
-                    error.printStackTrace()
-                    return@addSnapshotListener
-                }
-                if (snapshot != null) {
-                    val prods = snapshot.documents.mapNotNull { doc ->
-                        doc.data?.toProduct()
-                    }
-                    if (prods.isNotEmpty()) {
-                        viewModelScope.launch {
-                            repository.insertProducts(prods)
-                        }
-                    }
-                }
-            }
-
             // Sync all users from Firestore to Room for real-time verification and syncing
             db.collection("users").addSnapshotListener { snapshot, error ->
                 if (error != null) {
@@ -586,11 +593,6 @@ class BazaarViewModel(application: Application) : AndroidViewModel(application) 
                 // Push local users to Firestore
                 repository.getAllUsers().first().forEach { user ->
                     db.collection("users").document(user.email).set(user.toMap())
-                }
-                
-                // Push local products to Firestore
-                repository.getAllProducts().first().forEach { prod ->
-                    db.collection("products").document(prod.id.toString()).set(prod.toMap())
                 }
                 
                 // Push local orders to Firestore
@@ -1053,22 +1055,33 @@ class BazaarViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     // --- Actions: Cart ---
-    fun addToCart(product: Product) {
-        val user = _currentUser.value ?: return
+    fun addToCart(product: Product): Boolean {
+        val user = _currentUser.value ?: return false
+        val existing = _currentCart.value.find { it.productId == product.id }
+        if (product.stockQuantity <= (existing?.quantity ?: 0)) {
+            emitUserMessage("Only ${product.stockQuantity} products are available.")
+            return false
+        }
         viewModelScope.launch {
-            val existing = _currentCart.value.find { it.productId == product.id }
             if (existing != null) {
                 repository.updateCartQuantity(existing.id, existing.quantity + 1)
             } else {
                 repository.insertCartItem(CartItem(email = user.email, productId = product.id))
             }
         }
+        return true
     }
 
-    fun increaseCartQty(item: CartItem) {
+    fun increaseCartQty(item: CartItem): Boolean {
+        val stock = allProducts.value.find { it.id == item.productId }?.stockQuantity ?: 0
+        if (item.quantity >= stock) {
+            emitUserMessage("Only $stock products are available.")
+            return false
+        }
         viewModelScope.launch {
             repository.updateCartQuantity(item.id, item.quantity + 1)
         }
+        return true
     }
 
     fun decreaseCartQty(item: CartItem) {
@@ -1103,9 +1116,23 @@ class BazaarViewModel(application: Application) : AndroidViewModel(application) 
         deliveryCharge: Double = 0.0,
         paymentMode: String = "COD",
         paymentTransactionId: String = "",
-        clearCartAfterCheckout: Boolean = true
+        clearCartAfterCheckout: Boolean = true,
+        productQuantities: Map<Int, Int> = emptyMap(),
+        onResult: (Boolean, String?) -> Unit = { _, _ -> }
     ) {
         val user = _currentUser.value ?: return
+        if (!isAddressInServiceArea(deliveryAddress, appConfig.value)) {
+            val message = "Service not available in this area or pin code."
+            emitUserMessage(message)
+            onResult(false, message)
+            return
+        }
+        if (deliveryAddressLat == 0.0 || deliveryAddressLng == 0.0 || deliveryDistanceKm <= 0.0) {
+            val message = "Please detect/select a valid delivery location so distance can be calculated."
+            emitUserMessage(message)
+            onResult(false, message)
+            return
+        }
         viewModelScope.launch {
             val orderId = if (customOrderId.isNotBlank()) customOrderId else "ZVB-" + UUID.randomUUID().toString().uppercase().take(8)
             val newOrder = Order(
@@ -1125,18 +1152,35 @@ class BazaarViewModel(application: Application) : AndroidViewModel(application) 
                 deliveryAddressLng = deliveryAddressLng,
                 couponApplied = couponApplied,
                 paymentMode = paymentMode,
-                paymentTransactionId = paymentTransactionId
+                paymentTransactionId = paymentTransactionId,
+                productQuantities = productQuantities.entries.joinToString(",") { "${it.key}:${it.value}" }
             )
-            repository.insertOrder(newOrder)
-            if (clearCartAfterCheckout) {
-                repository.clearCart(user.email)
-            }
             try {
-                FirebaseFirestore.getInstance().collection("orders")
-                    .document(orderId)
-                    .set(newOrder.toMap())
+                val db = FirebaseFirestore.getInstance()
+                db.runTransaction { transaction ->
+                    val productDocs = productQuantities.mapKeys { (id, _) ->
+                        db.collection("products").document(id.toString())
+                    }
+                    val snapshots = productDocs.keys.associateWith(transaction::get)
+                    productDocs.forEach { (ref, requested) ->
+                        val available = (snapshots.getValue(ref).get("stockQuantity") as? Number)?.toInt() ?: 0
+                        if (requested > available) {
+                            throw IllegalStateException("Only $available products are available.")
+                        }
+                    }
+                    productDocs.forEach { (ref, requested) ->
+                        val available = (snapshots.getValue(ref).get("stockQuantity") as? Number)?.toInt() ?: 0
+                        transaction.update(ref, "stockQuantity", available - requested)
+                    }
+                    transaction.set(db.collection("orders").document(orderId), newOrder.toMap())
+                }.awaitTask()
+                repository.upsertOrderLocal(newOrder)
+                if (clearCartAfterCheckout) repository.clearCart(user.email)
+                onResult(true, null)
             } catch (e: Exception) {
-                e.printStackTrace()
+                val message = e.cause?.message ?: e.message ?: "Unable to place order."
+                emitUserMessage(message)
+                onResult(false, message)
             }
         }
     }
@@ -1149,7 +1193,8 @@ class BazaarViewModel(application: Application) : AndroidViewModel(application) 
         category: String,
         description: String,
         sellerEmail: String,
-        extraImages: String = ""
+        extraImages: String = "",
+        stockQuantity: Int
     ) {
         viewModelScope.launch {
             val id = (System.currentTimeMillis() % 10000000).toInt()
@@ -1170,17 +1215,28 @@ class BazaarViewModel(application: Application) : AndroidViewModel(application) 
                 description = description,
                 isFeatured = false,
                 sellerEmail = sellerEmail,
-                extraImages = secondaryImages
+                extraImages = secondaryImages,
+                stockQuantity = stockQuantity.coerceAtLeast(0)
             )
             repository.insertProduct(newProd)
-            try {
-                FirebaseFirestore.getInstance().collection("products")
-                    .document(id.toString())
-                    .set(newProd.toMap())
-            } catch (e: Exception) {
-                e.printStackTrace()
-            }
         }
+    }
+
+    fun updateProduct(product: Product) {
+        val sanitized = product.copy(stockQuantity = product.stockQuantity.coerceAtLeast(0))
+        pendingProductEdits.value = pendingProductEdits.value + (sanitized.id to sanitized)
+        viewModelScope.launch {
+            repository.insertProduct(sanitized)
+            kotlinx.coroutines.delay(5000L)
+            pendingProductEdits.value = pendingProductEdits.value - sanitized.id
+        }
+    }
+
+    fun deleteProduct(product: Product) {
+        val currentEmail = _currentUser.value?.email.orEmpty()
+        if (!product.sellerEmail.equals(currentEmail, ignoreCase = true)) return
+        pendingProductEdits.value = pendingProductEdits.value - product.id
+        viewModelScope.launch { repository.deleteProduct(product.id) }
     }
 
     fun updateOrderStatus(orderId: String, newStatus: String) {
@@ -1400,16 +1456,18 @@ class BazaarViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    fun uploadProductImageToCloudinary(uri: Uri, sellerEmail: String, imageId: String, onSuccess: (String) -> Unit) {
+    fun uploadProductImageToCloudinary(
+        uri: Uri,
+        sellerEmail: String,
+        imageId: String,
+        onError: (String) -> Unit = {},
+        onSuccess: (String) -> Unit
+    ) {
         viewModelScope.launch {
             try {
                 val cloudName = BuildConfig.CLOUDINARY_CLOUD_NAME
                 val uploadPreset = BuildConfig.CLOUDINARY_UPLOAD_PRESET
                 val folder = BuildConfig.CLOUDINARY_FOLDER
-
-                if (cloudName.isBlank() || uploadPreset.isBlank()) {
-                    throw IllegalStateException("Cloudinary cloud name or upload preset is missing.")
-                }
 
                 val downloadUrl = withContext(Dispatchers.IO) {
                     val app = getApplication<Application>()
@@ -1421,31 +1479,59 @@ class BazaarViewModel(application: Application) : AndroidViewModel(application) 
                     val bytes = resolver.openInputStream(uri)?.use { it.readBytes() }
                         ?: throw IllegalStateException("Unable to read selected image.")
 
-                    val fileBody = bytes.toRequestBody(mimeType.toMediaTypeOrNull())
-                    val multipart = MultipartBody.Builder()
-                        .setType(MultipartBody.FORM)
-                        .addFormDataPart("file", "product_$imageId.$extension", fileBody)
-                        .addFormDataPart("upload_preset", uploadPreset)
-                        .addFormDataPart("public_id", publicId)
-                        .apply {
-                            if (folder.isNotBlank()) addFormDataPart("folder", folder)
-                        }
-                        .build()
+                    suspend fun uploadToFirebase(): String {
+                        val storagePath = "product_images/$safeSeller/product_$imageId.$extension"
+                        val storageRef = com.google.firebase.storage.FirebaseStorage.getInstance().reference.child(storagePath)
+                        storageRef.putBytes(bytes).awaitTask()
+                        return storageRef.downloadUrl.awaitTask().toString()
+                    }
 
-                    val request = Request.Builder()
-                        .url("https://api.cloudinary.com/v1_1/$cloudName/image/upload")
-                        .post(multipart)
-                        .build()
+                    fun isConfigured(value: String): Boolean {
+                        val normalized = value.trim()
+                        return normalized.isNotBlank() &&
+                            !normalized.startsWith("your_", ignoreCase = true) &&
+                            !normalized.contains("_here", ignoreCase = true)
+                    }
 
-                    OkHttpClient().newCall(request).execute().use { response ->
-                        val raw = response.body?.string().orEmpty()
-                        if (!response.isSuccessful) {
-                            throw IllegalStateException("Cloudinary upload failed: $raw")
+                    if (!isConfigured(cloudName) || !isConfigured(uploadPreset)) {
+                        return@withContext uploadToFirebase()
+                    }
+
+                    try {
+                        val fileBody = bytes.toRequestBody(mimeType.toMediaTypeOrNull())
+                        val multipart = MultipartBody.Builder()
+                            .setType(MultipartBody.FORM)
+                            .addFormDataPart("file", "product_$imageId.$extension", fileBody)
+                            .addFormDataPart("upload_preset", uploadPreset)
+                            .addFormDataPart("public_id", publicId)
+                            .apply {
+                                if (isConfigured(folder)) addFormDataPart("folder", folder)
+                            }
+                            .build()
+
+                        val request = Request.Builder()
+                            .url("https://api.cloudinary.com/v1_1/$cloudName/image/upload")
+                            .post(multipart)
+                            .build()
+
+                        OkHttpClient().newCall(request).execute().use { response ->
+                            val raw = response.body?.string().orEmpty()
+                            if (!response.isSuccessful) {
+                                throw IllegalStateException("Cloudinary upload failed: $raw")
+                            }
+                            JSONObject(raw).optString("secure_url").ifBlank {
+                                JSONObject(raw).optString("url")
+                            }.ifBlank {
+                                throw IllegalStateException("Cloudinary did not return an image URL.")
+                            }
                         }
-                        JSONObject(raw).optString("secure_url").ifBlank {
-                            JSONObject(raw).optString("url")
-                        }.ifBlank {
-                            throw IllegalStateException("Cloudinary did not return an image URL.")
+                    } catch (cloudinaryError: Exception) {
+                        try {
+                            uploadToFirebase()
+                        } catch (firebaseError: Exception) {
+                            throw IllegalStateException(
+                                "Image upload failed. Cloudinary: ${cloudinaryError.message}. Firebase: ${firebaseError.message}"
+                            )
                         }
                     }
                 }
@@ -1464,6 +1550,9 @@ data class WithdrawRequest(
     val deliveryPartnerEmail: String,
     val amount: Double,
     val bankDetails: String,
-    val status: String, // "Pending", "Approved"
-    val requestDate: Long
+    val status: String, // "Scheduled", "Processing", "Paid", "Failed"
+    val requestDate: Long,
+    val accountRole: String = "DeliveryPartner",
+    val scheduledAt: Long = 0L,
+    val payoutId: String = ""
 )
