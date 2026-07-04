@@ -1892,9 +1892,24 @@ fun MainScreen(
 // A. HOME SCREEN (Flipkart & Amazon vibe)
 // ==========================================
 
+private fun extractPincode(address: String): String {
+    return Regex("\\b\\d{5,6}\\b")
+        .findAll(address)
+        .lastOrNull()
+        ?.value
+        .orEmpty()
+}
+
 /** Fetches the current location and returns "City, PostalCode" or a fallback string. */
 @SuppressLint("MissingPermission")
 private suspend fun getLocationText(context: android.content.Context): String {
+    val selection = getCurrentAddressSelection(context)
+    return if (selection.address.isNotBlank()) selection.address else "Location unavailable"
+}
+
+/** Fetches the current location with reverse-geocoded address and coordinates. */
+@SuppressLint("MissingPermission")
+private suspend fun getCurrentAddressSelection(context: android.content.Context): AddressSelection {
     return try {
         val fusedClient = LocationServices.getFusedLocationProviderClient(context)
         val location = suspendCancellableCoroutine<android.location.Location?> { cont ->
@@ -1902,22 +1917,20 @@ private suspend fun getLocationText(context: android.content.Context): String {
                 .addOnSuccessListener { loc -> if (cont.isActive) cont.resume(loc) {} }
                 .addOnFailureListener { if (cont.isActive) cont.resume(null) {} }
         }
-        if (location == null) return "Current location"
+        if (location == null) return AddressSelection("Current location")
         withContext(Dispatchers.IO) {
             @Suppress("DEPRECATION")
             val geocoder = Geocoder(context, Locale.getDefault())
             val addrs = geocoder.getFromLocation(location.latitude, location.longitude, 1)
-            if (!addrs.isNullOrEmpty()) {
-                val a = addrs[0]
-                listOfNotNull(a.locality ?: a.subAdminArea, a.postalCode)
-                    .joinToString(", ")
-                    .ifEmpty { "Current location" }
-            } else {
-                "Current location"
-            }
+            val address = addrs
+                ?.firstOrNull()
+                ?.getAddressLine(0)
+                ?.takeIf { it.isNotBlank() }
+                ?: "Current location"
+            AddressSelection(address, location.latitude, location.longitude)
         }
     } catch (e: Exception) {
-        "Location unavailable"
+        AddressSelection("Location unavailable")
     }
 }
 
@@ -1926,6 +1939,157 @@ data class AddressSelection(
     val latitude: Double = 0.0,
     val longitude: Double = 0.0
 )
+
+@Composable
+fun FlashSaleCountdownText(flashSaleEndTime: Long) {
+    var secondsLeft by remember(flashSaleEndTime) {
+        val diff = (flashSaleEndTime - System.currentTimeMillis()) / 1000
+        mutableStateOf(if (diff > 0) diff.toLong() else 10745L)
+    }
+
+    LaunchedEffect(flashSaleEndTime) {
+        while (true) {
+            delay(1000)
+            secondsLeft = if (secondsLeft > 0) secondsLeft - 1 else 10800L
+        }
+    }
+
+    val hours = secondsLeft / 3600
+    val minutes = (secondsLeft % 3600) / 60
+    val seconds = secondsLeft % 60
+    Text(
+        text = String.format("%02d:%02d:%02d", hours, minutes, seconds),
+        color = Color(0xFFE65100),
+        fontSize = 12.sp,
+        fontWeight = FontWeight.Bold
+    )
+}
+
+@Composable
+fun HomeBannerCarousel(
+    bannersList: List<Banner>,
+    onCategorySelect: (String) -> Unit
+) {
+    var bannerIndex by remember { mutableStateOf(0) }
+
+    LaunchedEffect(bannersList) {
+        while (true) {
+            delay(4500)
+            bannerIndex = if (bannersList.isNotEmpty()) {
+                (bannerIndex + 1) % bannersList.size
+            } else {
+                (bannerIndex + 1) % 3
+            }
+        }
+    }
+
+    val bannersToShow = remember(bannersList) {
+        if (bannersList.isNotEmpty()) {
+            bannersList
+        } else {
+            listOf(
+                Banner(id = "banner_1", label = "LAUNCH SPECIAL", title = "50% OFF ON SMART ASSISTANTS", description = "Futuristic wellness tech with AMOLED screens & rapid charge.", targetCategory = "Electronics", gradientStart = "#1B5E20", gradientEnd = "#A5D6A7"),
+                Banner(id = "banner_2", label = "WEEKEND HARVEST", title = "30% OFF ALL ORGANIC PRODUCTS", description = "Crispy, hand-picked pesticide-free seasonal green food.", targetCategory = "Fresh Products", gradientStart = "#2E7D32", gradientEnd = "#81C784"),
+                Banner(id = "banner_3", label = "STYLE INSPIRATION", title = "BUY 1 GET 1 ON EMERALD SNEAKERS", description = "Elevate your step with lightweight, vulcanized rubber running soles.", targetCategory = "Fashion", gradientStart = "#8E24AA", gradientEnd = "#CE93D8")
+            )
+        }
+    }
+    val currentBannerIndex = if (bannersToShow.isNotEmpty()) bannerIndex % bannersToShow.size else 0
+    val currentBanner = bannersToShow.getOrNull(currentBannerIndex) ?: return
+
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(180.dp)
+            .padding(horizontal = 16.dp, vertical = 6.dp)
+            .shadow(8.dp, shape = RoundedCornerShape(16.dp))
+            .clip(RoundedCornerShape(16.dp))
+            .clickable {
+                if (currentBanner.targetCategory.isNotEmpty()) {
+                    onCategorySelect(currentBanner.targetCategory)
+                }
+            }
+    ) {
+        val colors = try {
+            listOf(
+                Color(android.graphics.Color.parseColor(currentBanner.gradientStart)),
+                Color(android.graphics.Color.parseColor(currentBanner.gradientEnd))
+            )
+        } catch (e: Exception) {
+            listOf(DarkGreenPrimary, MintAccent)
+        }
+
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Brush.horizontalGradient(colors))
+        )
+
+        Box(
+            modifier = Modifier
+                .size(240.dp)
+                .offset(x = 180.dp, y = (-50).dp)
+                .background(Color.White.copy(alpha = 0.08f), CircleShape)
+        )
+
+        Column(
+            modifier = Modifier
+                .fillMaxHeight()
+                .fillMaxWidth(0.7f)
+                .padding(20.dp),
+            verticalArrangement = Arrangement.Center
+        ) {
+            Box(
+                modifier = Modifier
+                    .background(AccentGold, shape = RoundedCornerShape(4.dp))
+                    .padding(horizontal = 8.dp, vertical = 3.dp)
+            ) {
+                Text(
+                    text = currentBanner.label,
+                    color = RichBlack,
+                    fontWeight = FontWeight.Black,
+                    fontSize = 9.sp
+                )
+            }
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                text = currentBanner.title,
+                color = CustomWhite,
+                fontWeight = FontWeight.Black,
+                fontSize = 16.sp,
+                lineHeight = 20.sp
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                text = currentBanner.description,
+                color = CustomWhite.copy(alpha = 0.85f),
+                fontSize = 11.sp,
+                lineHeight = 14.sp,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+
+        Row(
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .padding(14.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            bannersToShow.forEachIndexed { index, _ ->
+                val active = index == currentBannerIndex
+                Box(
+                    modifier = Modifier
+                        .size(if (active) 16.dp else 8.dp, 8.dp)
+                        .background(
+                            color = if (active) AccentGold else CustomWhite.copy(alpha = 0.5f),
+                            shape = RoundedCornerShape(4.dp)
+                        )
+                )
+            }
+        }
+    }
+}
 
 @Composable
 fun AddressSuggestionField(
@@ -2080,41 +2244,6 @@ fun HomeScreen(
     val appConfig by viewModel.appConfig.collectAsState()
     val bannersList by viewModel.banners.collectAsState()
     val shortcutsList by viewModel.shortcuts.collectAsState()
-
-    // Banner & Countdown state
-    var bannerIndex by remember { mutableStateOf(0) }
-    var secondsLeft by remember(appConfig.flashSaleEndTime) {
-        val diff = (appConfig.flashSaleEndTime - System.currentTimeMillis()) / 1000
-        mutableStateOf(if (diff > 0) diff.toLong() else 10745L)
-    }
-
-    LaunchedEffect(appConfig.flashSaleEndTime) {
-        while (true) {
-            kotlinx.coroutines.delay(1000)
-            if (secondsLeft > 0) {
-                secondsLeft--
-            } else {
-                secondsLeft = 10800L
-            }
-        }
-    }
-
-    LaunchedEffect(bannersList) {
-        while (true) {
-            kotlinx.coroutines.delay(4500)
-            if (bannersList.isNotEmpty()) {
-                bannerIndex = (bannerIndex + 1) % bannersList.size
-            } else {
-                bannerIndex = (bannerIndex + 1) % 3
-            }
-        }
-    }
-
-    val hours = secondsLeft / 3600
-    val minutes = (secondsLeft % 3600) / 60
-    val seconds = secondsLeft % 60
-    val countdownStr = String.format("%02d:%02d:%02d", hours, minutes, seconds)
-
 
     Box(modifier = Modifier.fillMaxSize()) {
     LazyColumn(
@@ -2331,112 +2460,10 @@ fun HomeScreen(
 
         // Premium Swipable / Rotating Carousel Billboard Hero Banner
         item {
-            val bannersToShow = if (bannersList.isNotEmpty()) bannersList else {
-                listOf(
-                    Banner(id = "banner_1", label = "LAUNCH SPECIAL", title = "50% OFF ON SMART ASSISTANTS", description = "Futuristic wellness tech with AMOLED screens & rapid charge.", targetCategory = "Electronics", gradientStart = "#1B5E20", gradientEnd = "#A5D6A7"),
-                    Banner(id = "banner_2", label = "WEEKEND HARVEST", title = "30% OFF ALL ORGANIC PRODUCTS", description = "Crispy, hand-picked pesticide-free seasonal green food.", targetCategory = "Fresh Products", gradientStart = "#2E7D32", gradientEnd = "#81C784"),
-                    Banner(id = "banner_3", label = "STYLE INSPIRATION", title = "BUY 1 GET 1 ON EMERALD SNEAKERS", description = "Elevate your step with lightweight, vulcanized rubber running soles.", targetCategory = "Fashion", gradientStart = "#8E24AA", gradientEnd = "#CE93D8")
-                )
-            }
-            val currentBannerIndex = if (bannersToShow.isNotEmpty()) bannerIndex % bannersToShow.size else 0
-            val currentBanner = if (bannersToShow.isNotEmpty()) bannersToShow[currentBannerIndex] else null
-
-            if (currentBanner != null) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(180.dp)
-                        .padding(horizontal = 16.dp, vertical = 6.dp)
-                        .shadow(8.dp, shape = RoundedCornerShape(16.dp))
-                        .clip(RoundedCornerShape(16.dp))
-                        .clickable {
-                            if (currentBanner.targetCategory.isNotEmpty()) {
-                                viewModel.selectCategory(currentBanner.targetCategory)
-                            }
-                        }
-                ) {
-                    val colors = try {
-                        listOf(
-                            Color(android.graphics.Color.parseColor(currentBanner.gradientStart)),
-                            Color(android.graphics.Color.parseColor(currentBanner.gradientEnd))
-                        )
-                    } catch (e: Exception) {
-                        listOf(DarkGreenPrimary, MintAccent)
-                    }
-
-                    Box(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .background(Brush.horizontalGradient(colors))
-                    )
-
-                    // Circular abstract visual decoration
-                    Box(
-                        modifier = Modifier
-                            .size(240.dp)
-                            .offset(x = 180.dp, y = (-50).dp)
-                            .background(Color.White.copy(alpha = 0.08f), CircleShape)
-                    )
-
-                    Column(
-                        modifier = Modifier
-                            .fillMaxHeight()
-                            .fillMaxWidth(0.7f)
-                            .padding(20.dp),
-                        verticalArrangement = Arrangement.Center
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .background(AccentGold, shape = RoundedCornerShape(4.dp))
-                                .padding(horizontal = 8.dp, vertical = 3.dp)
-                        ) {
-                            Text(
-                                text = currentBanner.label,
-                                color = RichBlack,
-                                fontWeight = FontWeight.Black,
-                                fontSize = 9.sp
-                            )
-                        }
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Text(
-                            text = currentBanner.title,
-                            color = CustomWhite,
-                            fontWeight = FontWeight.Black,
-                            fontSize = 16.sp,
-                            lineHeight = 20.sp
-                        )
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text(
-                            text = currentBanner.description,
-                            color = CustomWhite.copy(alpha = 0.85f),
-                            fontSize = 11.sp,
-                            lineHeight = 14.sp,
-                            maxLines = 2,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                    }
-
-                    // Slider Pagination dots overlay
-                    Row(
-                        modifier = Modifier
-                            .align(Alignment.BottomEnd)
-                            .padding(14.dp),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
-                        bannersToShow.forEachIndexed { index, _ ->
-                            val active = index == currentBannerIndex
-                            Box(
-                                modifier = Modifier
-                                    .size(if (active) 16.dp else 8.dp, 8.dp)
-                                    .background(
-                                        color = if (active) AccentGold else CustomWhite.copy(alpha = 0.5f),
-                                        shape = RoundedCornerShape(4.dp)
-                                    )
-                            )
-                        }
-                    }
-                }
-            }
+            HomeBannerCarousel(
+                bannersList = bannersList,
+                onCategorySelect = { viewModel.selectCategory(it) }
+            )
         }
 
         // --- FLASH SALE WITH COUNTDOWN (Flipkart style!) ---
@@ -2484,12 +2511,7 @@ fun HomeScreen(
                                 modifier = Modifier.size(14.dp)
                             )
                             Spacer(modifier = Modifier.width(4.dp))
-                            Text(
-                                text = countdownStr,
-                                color = Color(0xFFE65100),
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.Bold
-                            )
+                            FlashSaleCountdownText(appConfig.flashSaleEndTime)
                         }
                     }
 
@@ -2501,7 +2523,11 @@ fun HomeScreen(
                         contentPadding = PaddingValues(end = 8.dp)
                     ) {
                         val flashItems = products.take(4)
-                        items(flashItems) { prod ->
+                        items(flashItems, key = { it.id }) { prod ->
+                            val flashPhoto = prod.primaryPhotoUrl()
+                            val flashPhotoModel = remember(flashPhoto) {
+                                resolveProductImageModel(context, flashPhoto)
+                            }
                             Card(
                                 modifier = Modifier
                                     .width(150.dp)
@@ -2518,17 +2544,28 @@ fun HomeScreen(
                                             .background(SoftGrey, shape = RoundedCornerShape(8.dp)),
                                         contentAlignment = Alignment.Center
                                     ) {
-                                        Icon(
-                                            imageVector = when (prod.category) {
-                                                "Electronics" -> Icons.Default.Devices
-                                                "Fresh Products" -> Icons.Default.LocalFlorist
-                                                "Fashion" -> Icons.Default.ShoppingBag
-                                                else -> Icons.Default.Kitchen
-                                            },
-                                            contentDescription = "",
-                                            tint = DarkGreenPrimary.copy(alpha = 0.5f),
-                                            modifier = Modifier.size(36.dp)
-                                        )
+                                        if (flashPhotoModel != null) {
+                                            AsyncImage(
+                                                model = flashPhotoModel,
+                                                contentDescription = prod.name,
+                                                modifier = Modifier.fillMaxSize(),
+                                                contentScale = ContentScale.Crop,
+                                                placeholder = painterResource(id = R.drawable.img_hero_banner_1782139859933),
+                                                error = painterResource(id = R.drawable.img_hero_banner_1782139859933)
+                                            )
+                                        } else {
+                                            Icon(
+                                                imageVector = when (prod.category) {
+                                                    "Electronics" -> Icons.Default.Devices
+                                                    "Fresh Products" -> Icons.Default.LocalFlorist
+                                                    "Fashion" -> Icons.Default.ShoppingBag
+                                                    else -> Icons.Default.Kitchen
+                                                },
+                                                contentDescription = "",
+                                                tint = DarkGreenPrimary.copy(alpha = 0.5f),
+                                                modifier = Modifier.size(36.dp)
+                                            )
+                                        }
                                         // Save Badge
                                         Box(
                                             modifier = Modifier
@@ -2667,8 +2704,12 @@ fun HomeScreen(
             }
         } else {
             // Group in pairs to mimic grid cleanly inside LazyColumn
-            val pairs = products.chunked(2)
-            items(pairs) { pair ->
+            val pairs = remember(products) { products.chunked(2) }
+            val cartByProductId = remember(cartList) { cartList.associateBy { it.productId } }
+            items(
+                items = pairs,
+                key = { pair -> pair.joinToString("_") { it.id.toString() } }
+            ) { pair ->
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -2677,7 +2718,7 @@ fun HomeScreen(
                 ) {
                     pair.forEach { prod ->
                         Box(modifier = Modifier.weight(1f)) {
-                            val cartItem = cartList.find { it.productId == prod.id }
+                            val cartItem = cartByProductId[prod.id]
                             ProductItemCard(
                                 product = prod,
                                 onCallSelect = { onProductSelect(prod) },
@@ -2771,12 +2812,30 @@ fun HomeScreen(
 
 // 2-Column Product Card
 fun Product.primaryPhotoUrl(): String {
-    if (imageUrlName.isNotBlank()) return imageUrlName
-    return extraImages
-        .split(",")
+    return photoEntries().firstOrNull().orEmpty()
+}
+
+fun Product.photoEntries(): List<String> {
+    return (listOf(imageUrlName) + extraImages.split(","))
         .map { it.trim() }
-        .firstOrNull { it.isNotBlank() }
-        .orEmpty()
+        .filter { it.isNotBlank() }
+        .distinct()
+}
+
+fun resolveProductImageModel(context: android.content.Context, imageRef: String): Any? {
+    val trimmed = imageRef.trim()
+    if (trimmed.isBlank()) return null
+    if (
+        trimmed.startsWith("http://", ignoreCase = true) ||
+        trimmed.startsWith("https://", ignoreCase = true) ||
+        trimmed.startsWith("content://", ignoreCase = true) ||
+        trimmed.startsWith("file://", ignoreCase = true)
+    ) {
+        return trimmed
+    }
+    val resourceName = trimmed.substringBeforeLast(".")
+    val resourceId = context.resources.getIdentifier(resourceName, "drawable", context.packageName)
+    return resourceId.takeIf { it != 0 } ?: trimmed
 }
 
 @Composable
@@ -2791,7 +2850,13 @@ fun ProductItemCard(
     onIncrement: () -> Unit = {},
     onDecrement: () -> Unit = {}
 ) {
+    val context = LocalContext.current
     val primaryPhotoUrl = product.primaryPhotoUrl()
+    val primaryPhotoModel = remember(primaryPhotoUrl) {
+        resolveProductImageModel(context, primaryPhotoUrl)
+    }
+    val isInStock = product.stock > 0
+    val stockLabel = if (product.stock >= 999) "In stock" else "Stock: ${product.stock}"
 
     Card(
         modifier = Modifier
@@ -2810,9 +2875,9 @@ fun ProductItemCard(
                 .background(SoftGrey)
         ) {
             // Display actual product photo if available, otherwise use a category visual.
-            if (primaryPhotoUrl.isNotBlank()) {
+            if (primaryPhotoModel != null) {
                 AsyncImage(
-                    model = primaryPhotoUrl,
+                    model = primaryPhotoModel,
                     contentDescription = product.name,
                     modifier = Modifier.fillMaxSize(),
                     contentScale = ContentScale.Crop,
@@ -2932,6 +2997,14 @@ fun ProductItemCard(
                 )
             }
 
+            Text(
+                text = if (isInStock) stockLabel else "Out of stock",
+                color = if (isInStock) DarkGreenPrimary else AccentRed,
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.padding(top = 2.dp)
+            )
+
             Spacer(modifier = Modifier.height(8.dp))
 
             // Cart control: +/- row if in cart, else Add to Cart button
@@ -2963,12 +3036,13 @@ fun ProductItemCard(
                     )
                     IconButton(
                         onClick = onIncrement,
+                        enabled = cartQuantity < product.stock,
                         modifier = Modifier.size(36.dp)
                     ) {
                         Icon(
                             imageVector = Icons.Default.Add,
                             contentDescription = "Increase",
-                            tint = CustomWhite,
+                            tint = if (cartQuantity < product.stock) CustomWhite else CustomWhite.copy(alpha = 0.35f),
                             modifier = Modifier.size(18.dp)
                         )
                     }
@@ -2976,10 +3050,14 @@ fun ProductItemCard(
             } else {
                 Button(
                     onClick = onCallAddToCart,
+                    enabled = isInStock,
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(36.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = DarkGreenPrimary),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = DarkGreenPrimary,
+                        disabledContainerColor = MutedText.copy(alpha = 0.25f)
+                    ),
                     shape = RoundedCornerShape(6.dp),
                     contentPadding = PaddingValues(0.dp)
                 ) {
@@ -2991,7 +3069,7 @@ fun ProductItemCard(
                     )
                     Spacer(modifier = Modifier.width(4.dp))
                     Text(
-                        text = "Add to Cart",
+                        text = if (isInStock) "Add to Cart" else "Out of Stock",
                         style = MaterialTheme.typography.bodySmall.copy(
                             fontWeight = FontWeight.Bold,
                             color = CustomWhite
@@ -3004,12 +3082,16 @@ fun ProductItemCard(
 
             OutlinedButton(
                 onClick = onCallBuyNow,
+                enabled = isInStock,
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(34.dp)
                     .testTag("product_buy_now_${product.id}"),
                 border = BorderStroke(1.dp, DarkGreenPrimary),
-                colors = ButtonDefaults.outlinedButtonColors(contentColor = DarkGreenPrimary),
+                colors = ButtonDefaults.outlinedButtonColors(
+                    contentColor = DarkGreenPrimary,
+                    disabledContentColor = MutedText
+                ),
                 shape = RoundedCornerShape(6.dp),
                 contentPadding = PaddingValues(horizontal = 4.dp)
             ) {
@@ -3020,7 +3102,7 @@ fun ProductItemCard(
                 )
                 Spacer(modifier = Modifier.width(4.dp))
                 Text(
-                    text = "Buy Now",
+                    text = if (isInStock) "Buy Now" else "Unavailable",
                     style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Bold)
                 )
             }
@@ -3157,7 +3239,7 @@ fun CategoriesScreen(
                     horizontalArrangement = Arrangement.spacedBy(10.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    items(products) { prod ->
+                    items(products, key = { it.id }) { prod ->
                         val cartItem = cartList.find { it.productId == prod.id }
                         ProductItemCard(
                             product = prod,
@@ -3212,6 +3294,7 @@ fun CartScreen(
 ) {
     val cartList by viewModel.currentCart.collectAsState()
     val allProducts by viewModel.allProducts.collectAsState()
+    val serviceAreas by viewModel.serviceAreas.collectAsState()
     val user by viewModel.currentUser.collectAsState()
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
@@ -3223,6 +3306,7 @@ fun CartScreen(
     var cartTempAddress by remember { mutableStateOf("") }
     var cartTempAddressLat by remember { mutableStateOf(0.0) }
     var cartTempAddressLng by remember { mutableStateOf(0.0) }
+    var isFetchingCartLocation by remember { mutableStateOf(false) }
     var cartCouponText by remember { mutableStateOf("") }
     var cartIsCouponApplied by remember { mutableStateOf(false) }
     var generatedCartOrderId by remember { mutableStateOf("ZVB-" + (System.currentTimeMillis() % 100000000).toString()) }
@@ -3255,6 +3339,9 @@ fun CartScreen(
         val product = allProducts.find { it.id == cartItem.productId }
         if (product != null) Pair(cartItem, product) else null
     }
+    val stockIssue = computedItems.firstOrNull { (cartItem, product) ->
+        product.stock <= 0 || cartItem.quantity > product.stock
+    }
 
     val totalSubtotal = computedItems.sumOf { it.first.quantity * it.second.price }
 
@@ -3269,6 +3356,26 @@ fun CartScreen(
     val cartDeliveryDistanceKm = estimateDeliveryDistanceKm(generatedCartOrderId)
     val cartDeliveryCharge = calculateDeliveryCharge(cartPayableBeforeDelivery, cartDeliveryDistanceKm)
     val cartFinalTotal = cartPayableBeforeDelivery + cartDeliveryCharge.totalCharge
+    val cartPinCode = extractPincode(cartTempAddress)
+    val isCartAddressDeliverable = cartPinCode.isNotBlank() && serviceAreas.any {
+        it.pinCode.filter { ch -> ch.isDigit() } == cartPinCode
+    }
+    val cartLocationPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { permissions ->
+        if (permissions.values.any { it }) {
+            coroutineScope.launch {
+                isFetchingCartLocation = true
+                val selection = getCurrentAddressSelection(context)
+                cartTempAddress = selection.address
+                cartTempAddressLat = selection.latitude
+                cartTempAddressLng = selection.longitude
+                isFetchingCartLocation = false
+            }
+        } else {
+            Toast.makeText(context, "Location permission denied.", Toast.LENGTH_SHORT).show()
+        }
+    }
 
     Box(modifier = Modifier.fillMaxSize()) {
     Column(
@@ -3325,7 +3432,7 @@ fun CartScreen(
                 contentPadding = PaddingValues(16.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                items(computedItems) { (cartItem, product) ->
+                items(computedItems, key = { (cartItem, product) -> "${cartItem.id}_${product.id}" }) { (cartItem, product) ->
                     CartItemRow(
                         cartItem = cartItem,
                         product = product,
@@ -3385,8 +3492,13 @@ fun CartScreen(
 
                     Button(
                         onClick = {
-                            showCartCheckoutDialog = true
-                            cartCheckoutStep = 1
+                            if (stockIssue != null) {
+                                val product = stockIssue.second
+                                Toast.makeText(context, "${product.name} has only ${product.stock.coerceAtLeast(0)} in stock.", Toast.LENGTH_SHORT).show()
+                            } else {
+                                showCartCheckoutDialog = true
+                                cartCheckoutStep = 1
+                            }
                         },
                         modifier = Modifier
                             .fillMaxWidth()
@@ -3476,14 +3588,71 @@ fun CartScreen(
                                     .fillMaxWidth(),
                                 testTag = "cart_checkout_address"
                             )
+                            Spacer(modifier = Modifier.height(10.dp))
+                            OutlinedButton(
+                                onClick = {
+                                    val fine = ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
+                                    val coarse = ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
+                                    if (fine || coarse) {
+                                        coroutineScope.launch {
+                                            isFetchingCartLocation = true
+                                            val selection = getCurrentAddressSelection(context)
+                                            cartTempAddress = selection.address
+                                            cartTempAddressLat = selection.latitude
+                                            cartTempAddressLng = selection.longitude
+                                            isFetchingCartLocation = false
+                                        }
+                                    } else {
+                                        cartLocationPermissionLauncher.launch(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION))
+                                    }
+                                },
+                                modifier = Modifier.fillMaxWidth(),
+                                border = BorderStroke(1.dp, DarkGreenPrimary),
+                                colors = ButtonDefaults.outlinedButtonColors(contentColor = DarkGreenPrimary),
+                                shape = RoundedCornerShape(10.dp)
+                            ) {
+                                if (isFetchingCartLocation) {
+                                    CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp, color = DarkGreenPrimary)
+                                } else {
+                                    Icon(Icons.Default.MyLocation, contentDescription = "Current Location", modifier = Modifier.size(16.dp))
+                                }
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("Use Current Location", fontWeight = FontWeight.Bold)
+                            }
+                            Spacer(modifier = Modifier.height(10.dp))
+                            val cartServiceText = when {
+                                serviceAreas.isEmpty() -> "Delivery not available: admin has not added service pincodes."
+                                cartPinCode.isBlank() -> "Select an address with pincode to check delivery."
+                                isCartAddressDeliverable -> "Delivery available for pincode $cartPinCode."
+                                else -> "Delivery Not Available for pincode $cartPinCode."
+                            }
+                            Text(
+                                text = cartServiceText,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = if (isCartAddressDeliverable) DarkGreenPrimary else AccentRed
+                            )
+                            if (serviceAreas.isNotEmpty()) {
+                                Text(
+                                    text = "Admin service pincodes: ${serviceAreas.joinToString { it.pinCode }}",
+                                    fontSize = 10.sp,
+                                    color = MutedText,
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
                             Spacer(modifier = Modifier.height(20.dp))
                             Button(
                                 onClick = {
-                                    if (cartTempAddress.isNotBlank()) {
+                                    if (cartTempAddress.isBlank()) {
+                                        Toast.makeText(context, "Address cannot be empty", Toast.LENGTH_SHORT).show()
+                                    } else if (cartTempAddressLat == 0.0 && cartTempAddressLng == 0.0) {
+                                        Toast.makeText(context, "Please select an address suggestion or use current location for lat/long.", Toast.LENGTH_SHORT).show()
+                                    } else if (!isCartAddressDeliverable) {
+                                        Toast.makeText(context, "Delivery Not Available for this pincode.", Toast.LENGTH_SHORT).show()
+                                    } else {
                                         viewModel.updateAddress(cartTempAddress, cartTempAddressLat, cartTempAddressLng)
                                         cartCheckoutStep = 2
-                                    } else {
-                                        Toast.makeText(context, "Address cannot be empty", Toast.LENGTH_SHORT).show()
                                     }
                                 },
                                 modifier = Modifier.fillMaxWidth(),
@@ -3590,6 +3759,15 @@ fun CartScreen(
                             // Razorpay Payment Button
                             Button(
                                 onClick = {
+                                    if (stockIssue != null) {
+                                        val product = stockIssue.second
+                                        Toast.makeText(context, "${product.name} has only ${product.stock.coerceAtLeast(0)} in stock.", Toast.LENGTH_SHORT).show()
+                                        return@Button
+                                    }
+                                    if (!isCartAddressDeliverable) {
+                                        Toast.makeText(context, "Delivery Not Available for this pincode.", Toast.LENGTH_SHORT).show()
+                                        return@Button
+                                    }
                                     val act = activity ?: (context as? Activity)
                                     if (act != null) {
                                         val summary = computedItems.joinToString(", ") { "${it.second.name} x${it.first.quantity}" }
@@ -3744,7 +3922,12 @@ fun CartItemRow(
     onDecrease: () -> Unit,
     onRemove: () -> Unit
 ) {
+    val context = LocalContext.current
     val primaryPhotoUrl = product.primaryPhotoUrl()
+    val primaryPhotoModel = remember(primaryPhotoUrl) {
+        resolveProductImageModel(context, primaryPhotoUrl)
+    }
+    val canIncrease = cartItem.quantity < product.stock
 
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -3765,9 +3948,9 @@ fun CartItemRow(
                     .background(LightGreenSecondary),
                 contentAlignment = Alignment.Center
             ) {
-                if (primaryPhotoUrl.isNotBlank()) {
+                if (primaryPhotoModel != null) {
                     AsyncImage(
-                        model = primaryPhotoUrl,
+                        model = primaryPhotoModel,
                         contentDescription = product.name,
                         modifier = Modifier.fillMaxSize(),
                         contentScale = ContentScale.Crop,
@@ -3811,6 +3994,16 @@ fun CartItemRow(
                     fontWeight = FontWeight.Bold,
                     color = DarkGreenPrimary
                 )
+                Text(
+                    text = if (product.stock > 0) {
+                        if (product.stock >= 999) "In stock" else "Available: ${product.stock}"
+                    } else {
+                        "Out of stock"
+                    },
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = if (product.stock > 0) DarkGreenPrimary else AccentRed
+                )
             }
 
             // Quantity adjusters
@@ -3828,8 +4021,17 @@ fun CartItemRow(
                     modifier = Modifier.padding(horizontal = 4.dp),
                     color = RichBlack
                 )
-                IconButton(onClick = onIncrease, modifier = Modifier.size(32.dp)) {
-                    Icon(Icons.Default.Add, contentDescription = "Plus", tint = DarkGreenPrimary, modifier = Modifier.size(16.dp))
+                IconButton(
+                    onClick = onIncrease,
+                    enabled = canIncrease,
+                    modifier = Modifier.size(32.dp)
+                ) {
+                    Icon(
+                        Icons.Default.Add,
+                        contentDescription = "Plus",
+                        tint = if (canIncrease) DarkGreenPrimary else MutedText,
+                        modifier = Modifier.size(16.dp)
+                    )
                 }
             }
 
@@ -3908,7 +4110,7 @@ fun WishlistScreen(
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                items(favedProducts) { prod ->
+                items(favedProducts, key = { it.id }) { prod ->
                     ProductItemCard(
                         product = prod,
                         onCallSelect = { onProductSelect(prod) },
@@ -3980,7 +4182,7 @@ fun OrdersScreen(viewModel: BazaarViewModel) {
                 contentPadding = PaddingValues(16.dp),
                 verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
-                items(orderList) { order ->
+                items(orderList, key = { it.orderId }) { order ->
                     OrderItemCard(
                         order = order,
                         allProducts = allProducts,
@@ -4168,9 +4370,12 @@ fun OrdersScreen(viewModel: BazaarViewModel) {
                                         contentAlignment = Alignment.Center
                                     ) {
                                         val photoUrl = matchingProduct?.primaryPhotoUrl().orEmpty()
-                                        if (photoUrl.isNotBlank()) {
+                                        val photoModel = remember(photoUrl) {
+                                            resolveProductImageModel(context, photoUrl)
+                                        }
+                                        if (photoModel != null) {
                                             AsyncImage(
-                                                model = photoUrl,
+                                                model = photoModel,
                                                 contentDescription = matchingProduct?.name ?: line.name,
                                                 modifier = Modifier
                                                     .fillMaxSize()
@@ -5365,10 +5570,13 @@ fun DirectBuyCheckoutDialog(
 ) {
     val context = LocalContext.current
     val user by viewModel.currentUser.collectAsState()
+    val serviceAreas by viewModel.serviceAreas.collectAsState()
+    val coroutineScope = rememberCoroutineScope()
     var step by remember(product.id) { mutableStateOf(1) }
     var address by remember(product.id, user?.savedAddress) { mutableStateOf(user?.savedAddress ?: "") }
     var addressLat by remember(product.id, user?.savedAddressLat) { mutableStateOf(user?.savedAddressLat ?: 0.0) }
     var addressLng by remember(product.id, user?.savedAddressLng) { mutableStateOf(user?.savedAddressLng ?: 0.0) }
+    var isFetchingLocation by remember(product.id) { mutableStateOf(false) }
     var couponText by remember(product.id) { mutableStateOf("") }
     var couponApplied by remember(product.id) { mutableStateOf(false) }
     val orderId = remember(product.id) { "ZVB-" + java.util.UUID.randomUUID().toString().uppercase().take(8) }
@@ -5378,6 +5586,26 @@ fun DirectBuyCheckoutDialog(
     val deliveryDistanceKm = estimateDeliveryDistanceKm(orderId)
     val deliveryCharge = calculateDeliveryCharge(payableBeforeDelivery, deliveryDistanceKm)
     val finalAmount = payableBeforeDelivery + deliveryCharge.totalCharge
+    val pinCode = extractPincode(address)
+    val isAddressDeliverable = pinCode.isNotBlank() && serviceAreas.any {
+        it.pinCode.filter { ch -> ch.isDigit() } == pinCode
+    }
+    val locationPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { permissions ->
+        if (permissions.values.any { it }) {
+            coroutineScope.launch {
+                isFetchingLocation = true
+                val selection = getCurrentAddressSelection(context)
+                address = selection.address
+                addressLat = selection.latitude
+                addressLng = selection.longitude
+                isFetchingLocation = false
+            }
+        } else {
+            Toast.makeText(context, "Location permission denied.", Toast.LENGTH_SHORT).show()
+        }
+    }
 
     LaunchedEffect(viewModel) {
         viewModel.checkoutSuccessEvent.collect {
@@ -5425,11 +5653,68 @@ fun DirectBuyCheckoutDialog(
                             modifier = Modifier.fillMaxWidth(),
                             maxLines = 3
                         )
+                        Spacer(modifier = Modifier.height(10.dp))
+                        OutlinedButton(
+                            onClick = {
+                                val fine = ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
+                                val coarse = ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
+                                if (fine || coarse) {
+                                    coroutineScope.launch {
+                                        isFetchingLocation = true
+                                        val selection = getCurrentAddressSelection(context)
+                                        address = selection.address
+                                        addressLat = selection.latitude
+                                        addressLng = selection.longitude
+                                        isFetchingLocation = false
+                                    }
+                                } else {
+                                    locationPermissionLauncher.launch(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION))
+                                }
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                            border = BorderStroke(1.dp, DarkGreenPrimary),
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = DarkGreenPrimary),
+                            shape = RoundedCornerShape(10.dp)
+                        ) {
+                            if (isFetchingLocation) {
+                                CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp, color = DarkGreenPrimary)
+                            } else {
+                                Icon(Icons.Default.MyLocation, contentDescription = "Current Location", modifier = Modifier.size(16.dp))
+                            }
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Use Current Location", fontWeight = FontWeight.Bold)
+                        }
+                        Spacer(modifier = Modifier.height(10.dp))
+                        val serviceText = when {
+                            serviceAreas.isEmpty() -> "Delivery not available: admin has not added service pincodes."
+                            pinCode.isBlank() -> "Select an address with pincode to check delivery."
+                            isAddressDeliverable -> "Delivery available for pincode $pinCode."
+                            else -> "Delivery Not Available for pincode $pinCode."
+                        }
+                        Text(
+                            text = serviceText,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = if (isAddressDeliverable) DarkGreenPrimary else AccentRed
+                        )
+                        if (serviceAreas.isNotEmpty()) {
+                            Text(
+                                text = "Admin service pincodes: ${serviceAreas.joinToString { it.pinCode }}",
+                                fontSize = 10.sp,
+                                color = MutedText,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
                         Spacer(modifier = Modifier.height(16.dp))
                         Button(
                             onClick = {
                                 if (address.isBlank()) {
                                     Toast.makeText(context, "Address cannot be empty", Toast.LENGTH_SHORT).show()
+                                } else if (addressLat == 0.0 && addressLng == 0.0) {
+                                    Toast.makeText(context, "Please select an address suggestion or use current location for lat/long.", Toast.LENGTH_SHORT).show()
+                                } else if (!isAddressDeliverable) {
+                                    Toast.makeText(context, "Delivery Not Available for this pincode.", Toast.LENGTH_SHORT).show()
                                 } else {
                                     viewModel.updateAddress(address, addressLat, addressLng)
                                     step = 2
@@ -5510,6 +5795,10 @@ fun DirectBuyCheckoutDialog(
                         Spacer(modifier = Modifier.height(16.dp))
                         Button(
                             onClick = {
+                                if (!isAddressDeliverable) {
+                                    Toast.makeText(context, "Delivery Not Available for this pincode.", Toast.LENGTH_SHORT).show()
+                                    return@Button
+                                }
                                 val act = activity ?: (context as? Activity)
                                 if (act == null) {
                                     Toast.makeText(context, "Payment unavailable", Toast.LENGTH_SHORT).show()
@@ -5600,27 +5889,22 @@ fun ProductDetailPane(
     var isFaved = viewModel.isWishlisted(product.id)
     val user by viewModel.currentUser.collectAsState()
     val allUsers by viewModel.allUsers.collectAsState()
+    val serviceAreas by viewModel.serviceAreas.collectAsState()
     val seller = allUsers.find { it.email.equals(product.sellerEmail, ignoreCase = true) }
     val sellerDisplayName = seller?.shopName?.ifBlank { seller.name }?.ifBlank { "ZVB Certified Seller" } ?: "ZVB Certified Seller"
+    val isInStock = product.stock > 0
+    val stockLabel = if (product.stock >= 999) "In Stock (ZVB Assured)" else "Stock Available: ${product.stock}"
 
     var showCheckoutDialog by remember { mutableStateOf(false) }
     var checkoutStep by remember { mutableStateOf(1) } // 1: Delivery Address confirmation, 2: Secure Payment & Coupon, 3: Success info
     var tempAddress by remember { mutableStateOf(user?.savedAddress ?: "") }
     var tempAddressLat by remember { mutableStateOf(user?.savedAddressLat ?: 0.0) }
     var tempAddressLng by remember { mutableStateOf(user?.savedAddressLng ?: 0.0) }
+    var isFetchingDirectLocation by remember { mutableStateOf(false) }
     var tempCard by remember { mutableStateOf(user?.savedCards ?: "") }
     var directOrderId by remember { mutableStateOf("") }
     var directDeliveryDate by remember { mutableStateOf("") }
-    val carouselImages = remember(product) {
-        val list = mutableListOf<String>()
-        if (product.imageUrlName.isNotBlank()) {
-            list.add(product.imageUrlName)
-        }
-        if (product.extraImages.isNotBlank()) {
-            list.addAll(product.extraImages.split(",").map { it.trim() }.filter { it.isNotBlank() })
-        }
-        list
-    }
+    val carouselImages = remember(product.imageUrlName, product.extraImages) { product.photoEntries() }
     val displayCount = if (carouselImages.isNotEmpty()) carouselImages.size else 3
     val pagerState = rememberPagerState(pageCount = { displayCount })
     val coroutineScope = rememberCoroutineScope()
@@ -5647,6 +5931,26 @@ fun ProductDetailPane(
     val deliveryDistanceKm = estimateDeliveryDistanceKm(directOrderId)
     val deliveryCharge = calculateDeliveryCharge(payableBeforeDelivery, deliveryDistanceKm)
     val finalTotalAmount = payableBeforeDelivery + deliveryCharge.totalCharge
+    val directPinCode = extractPincode(tempAddress)
+    val isDirectAddressDeliverable = directPinCode.isNotBlank() && serviceAreas.any {
+        it.pinCode.filter { ch -> ch.isDigit() } == directPinCode
+    }
+    val directLocationPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { permissions ->
+        if (permissions.values.any { it }) {
+            coroutineScope.launch {
+                isFetchingDirectLocation = true
+                val selection = getCurrentAddressSelection(context)
+                tempAddress = selection.address
+                tempAddressLat = selection.latitude
+                tempAddressLng = selection.longitude
+                isFetchingDirectLocation = false
+            }
+        } else {
+            Toast.makeText(context, "Location permission denied.", Toast.LENGTH_SHORT).show()
+        }
+    }
 
     // Synchronize default values when user completes database syncing
     LaunchedEffect(user) {
@@ -5691,9 +5995,12 @@ fun ProductDetailPane(
                 ) {
                     if (carouselImages.isNotEmpty() && page < carouselImages.size) {
                         val currentImg = carouselImages[page]
-                        if (currentImg.startsWith("http://") || currentImg.startsWith("https://") || currentImg.isNotBlank()) {
+                        val currentModel = remember(currentImg) {
+                            resolveProductImageModel(context, currentImg)
+                        }
+                        if (currentModel != null) {
                             AsyncImage(
-                                model = currentImg,
+                                model = currentModel,
                                 contentDescription = product.name,
                                 modifier = Modifier.fillMaxSize(),
                                 contentScale = ContentScale.Crop,
@@ -5863,14 +6170,17 @@ fun ProductDetailPane(
 
                 Box(
                     modifier = Modifier
-                        .background(Color(0xFFE8F5E9), shape = RoundedCornerShape(6.dp))
+                        .background(
+                            if (isInStock) Color(0xFFE8F5E9) else Color(0xFFFFEBEE),
+                            shape = RoundedCornerShape(6.dp)
+                        )
                         .padding(horizontal = 10.dp, vertical = 4.dp)
                 ) {
                     Text(
-                        text = "In Stock (ZVB Assured)",
+                        text = if (isInStock) stockLabel else "Out of Stock",
                         fontSize = 11.sp,
                         fontWeight = FontWeight.Bold,
-                        color = Color(0xFF2E7D32)
+                        color = if (isInStock) Color(0xFF2E7D32) else AccentRed
                     )
                 }
             }
@@ -6079,11 +6389,12 @@ fun ProductDetailPane(
                         Spacer(modifier = Modifier.width(8.dp))
                         Button(
                             onClick = {
-                                if (pincodeText.length >= 5) {
-                                    pincodeStatus = if (pincodeText.startsWith("5") || pincodeText.toIntOrNull()?.let { it % 2 == 0 } == true) {
-                                        "⚡ Super-Fast PLUS Delivery by Tomorrow morning 10:00 AM (Free!)"
+                                val normalizedPin = pincodeText.filter { it.isDigit() }
+                                if (normalizedPin.length >= 5) {
+                                    pincodeStatus = if (viewModel.isPincodeDeliverable(normalizedPin)) {
+                                        "Delivery available for pincode $normalizedPin."
                                     } else {
-                                        "Standard Care Delivery: Free Delivery in 2 Days."
+                                        "Delivery Not Available for pincode $normalizedPin."
                                     }
                                 } else {
                                     pincodeStatus = "Invalid pincode. Enter at least 5 digits."
@@ -6103,7 +6414,7 @@ fun ProductDetailPane(
                             text = pincodeStatus,
                             fontSize = 11.sp,
                             fontWeight = FontWeight.Bold,
-                            color = if (pincodeStatus.contains("⚡")) DarkGreenPrimary else AccentRed
+                            color = if (pincodeStatus.startsWith("Delivery available")) DarkGreenPrimary else AccentRed
                         )
                     }
                 }
@@ -6269,17 +6580,26 @@ fun ProductDetailPane(
                         viewModel.addToCart(product)
                         Toast.makeText(context, "Added ${product.name} to Cart!", Toast.LENGTH_SHORT).show()
                     },
+                    enabled = isInStock,
                     modifier = Modifier
                         .weight(1f)
                         .height(50.dp)
                         .testTag("add_to_cart_button"),
-                    colors = ButtonDefaults.buttonColors(containerColor = LightGreenSecondary),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = LightGreenSecondary,
+                        disabledContainerColor = MutedText.copy(alpha = 0.25f)
+                    ),
                     shape = RoundedCornerShape(10.dp)
                 ) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Icon(Icons.Default.ShoppingCart, contentDescription = "", tint = DarkGreenPrimary, modifier = Modifier.size(18.dp))
                         Spacer(modifier = Modifier.width(6.dp))
-                        Text("Add to Cart", color = DarkGreenPrimary, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                        Text(
+                            if (isInStock) "Add to Cart" else "Out of Stock",
+                            color = DarkGreenPrimary,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 13.sp
+                        )
                     }
                 }
 
@@ -6292,17 +6612,21 @@ fun ProductDetailPane(
                         showCheckoutDialog = true
                         checkoutStep = 1
                     },
+                    enabled = isInStock,
                     modifier = Modifier
                         .weight(1f)
                         .height(50.dp)
                         .testTag("buy_now_button"),
-                    colors = ButtonDefaults.buttonColors(containerColor = DarkGreenPrimary),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = DarkGreenPrimary,
+                        disabledContainerColor = MutedText.copy(alpha = 0.25f)
+                    ),
                     shape = RoundedCornerShape(10.dp)
                 ) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Icon(Icons.Default.OfflineBolt, contentDescription = "", tint = CustomWhite, modifier = Modifier.size(18.dp))
                         Spacer(modifier = Modifier.width(6.dp))
-                        Text("Buy Now", color = CustomWhite, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                        Text(if (isInStock) "Buy Now" else "Unavailable", color = CustomWhite, fontWeight = FontWeight.Bold, fontSize = 13.sp)
                     }
                 }
             }
@@ -6385,14 +6709,71 @@ fun ProductDetailPane(
                                     .fillMaxWidth(),
                                 testTag = "checkout_address_input"
                             )
+                            Spacer(modifier = Modifier.height(10.dp))
+                            OutlinedButton(
+                                onClick = {
+                                    val fine = ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
+                                    val coarse = ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
+                                    if (fine || coarse) {
+                                        coroutineScope.launch {
+                                            isFetchingDirectLocation = true
+                                            val selection = getCurrentAddressSelection(context)
+                                            tempAddress = selection.address
+                                            tempAddressLat = selection.latitude
+                                            tempAddressLng = selection.longitude
+                                            isFetchingDirectLocation = false
+                                        }
+                                    } else {
+                                        directLocationPermissionLauncher.launch(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION))
+                                    }
+                                },
+                                modifier = Modifier.fillMaxWidth(),
+                                border = BorderStroke(1.dp, DarkGreenPrimary),
+                                colors = ButtonDefaults.outlinedButtonColors(contentColor = DarkGreenPrimary),
+                                shape = RoundedCornerShape(10.dp)
+                            ) {
+                                if (isFetchingDirectLocation) {
+                                    CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp, color = DarkGreenPrimary)
+                                } else {
+                                    Icon(Icons.Default.MyLocation, contentDescription = "Current Location", modifier = Modifier.size(16.dp))
+                                }
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("Use Current Location", fontWeight = FontWeight.Bold)
+                            }
+                            Spacer(modifier = Modifier.height(10.dp))
+                            val directServiceText = when {
+                                serviceAreas.isEmpty() -> "Delivery not available: admin has not added service pincodes."
+                                directPinCode.isBlank() -> "Select an address with pincode to check delivery."
+                                isDirectAddressDeliverable -> "Delivery available for pincode $directPinCode."
+                                else -> "Delivery Not Available for pincode $directPinCode."
+                            }
+                            Text(
+                                text = directServiceText,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = if (isDirectAddressDeliverable) DarkGreenPrimary else AccentRed
+                            )
+                            if (serviceAreas.isNotEmpty()) {
+                                Text(
+                                    text = "Admin service pincodes: ${serviceAreas.joinToString { it.pinCode }}",
+                                    fontSize = 10.sp,
+                                    color = MutedText,
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
                             Spacer(modifier = Modifier.height(20.dp))
                             Button(
                                 onClick = {
-                                    if (tempAddress.isNotBlank()) {
+                                    if (tempAddress.isBlank()) {
+                                        Toast.makeText(context, "Address cannot be empty", Toast.LENGTH_SHORT).show()
+                                    } else if (tempAddressLat == 0.0 && tempAddressLng == 0.0) {
+                                        Toast.makeText(context, "Please select an address suggestion or use current location for lat/long.", Toast.LENGTH_SHORT).show()
+                                    } else if (!isDirectAddressDeliverable) {
+                                        Toast.makeText(context, "Delivery Not Available for this pincode.", Toast.LENGTH_SHORT).show()
+                                    } else {
                                         viewModel.updateAddress(tempAddress, tempAddressLat, tempAddressLng)
                                         checkoutStep = 2
-                                    } else {
-                                        Toast.makeText(context, "Address cannot be empty", Toast.LENGTH_SHORT).show()
                                     }
                                 },
                                 modifier = Modifier.fillMaxWidth(),
@@ -6498,6 +6879,14 @@ fun ProductDetailPane(
                             Spacer(modifier = Modifier.height(16.dp))
                             Button(
                                 onClick = {
+                                    if (!isInStock) {
+                                        Toast.makeText(context, "${product.name} is out of stock.", Toast.LENGTH_SHORT).show()
+                                        return@Button
+                                    }
+                                    if (!isDirectAddressDeliverable) {
+                                        Toast.makeText(context, "Delivery Not Available for this pincode.", Toast.LENGTH_SHORT).show()
+                                        return@Button
+                                    }
                                     val act = activity ?: (context as? Activity)
                                     if (act != null) {
                                         val summary = "${product.name} x1"
@@ -6737,10 +7126,12 @@ fun SellerPanelScreen(
     var newProdName by remember { mutableStateOf("") }
     var newProdPrice by remember { mutableStateOf("") }
     var newProdOrigPrice by remember { mutableStateOf("") }
+    var newProdStock by remember { mutableStateOf("") }
     var newProdCat by remember { mutableStateOf("Electronics") }
     var newProdDesc by remember { mutableStateOf("") }
     var imageList by remember { mutableStateOf(listOf<String>()) }
     var showProductImageSelectorDialog by remember { mutableStateOf(false) }
+    var editingProduct by remember { mutableStateOf<Product?>(null) }
 
     val productPhotoLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
@@ -7438,8 +7829,11 @@ fun SellerPanelScreen(
                                     }
                                 }
                             } else {
-                                items(sellerProducts) { prod ->
+                                items(sellerProducts, key = { it.id }) { prod ->
                                     val sellerProductPhoto = prod.primaryPhotoUrl()
+                                    val sellerProductPhotoModel = remember(sellerProductPhoto) {
+                                        resolveProductImageModel(context, sellerProductPhoto)
+                                    }
                                     Card(
                                         modifier = Modifier.fillMaxWidth(),
                                         colors = CardDefaults.cardColors(containerColor = CustomWhite)
@@ -7456,9 +7850,9 @@ fun SellerPanelScreen(
                                                     .background(LightGreenSecondary.copy(alpha = 0.5f), shape = RoundedCornerShape(8.dp)),
                                                 contentAlignment = Alignment.Center
                                             ) {
-                                                if (sellerProductPhoto.isNotBlank()) {
+                                                if (sellerProductPhotoModel != null) {
                                                     AsyncImage(
-                                                        model = sellerProductPhoto,
+                                                        model = sellerProductPhotoModel,
                                                         contentDescription = prod.name,
                                                         modifier = Modifier.fillMaxSize(),
                                                         contentScale = ContentScale.Crop,
@@ -7480,6 +7874,45 @@ fun SellerPanelScreen(
                                                     Text("₹${prod.price}", fontWeight = FontWeight.Black, color = DarkGreenPrimary, fontSize = 13.sp)
                                                     Spacer(modifier = Modifier.width(8.dp))
                                                     Text("₹${prod.originalPrice}", textDecoration = TextDecoration.LineThrough, fontSize = 11.sp, color = MutedText)
+                                                }
+                                                Text(
+                                                    text = if (prod.stock > 0) {
+                                                        if (prod.stock >= 999) "Stock: Available" else "Stock: ${prod.stock}"
+                                                    } else {
+                                                        "Out of stock"
+                                                    },
+                                                    fontSize = 11.sp,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = if (prod.stock > 0) DarkGreenPrimary else AccentRed
+                                                )
+                                                Spacer(modifier = Modifier.height(8.dp))
+                                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                                    OutlinedButton(
+                                                        onClick = { editingProduct = prod },
+                                                        modifier = Modifier.height(34.dp),
+                                                        shape = RoundedCornerShape(8.dp),
+                                                        border = BorderStroke(1.dp, DarkGreenPrimary),
+                                                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp)
+                                                    ) {
+                                                        Icon(Icons.Default.Edit, contentDescription = "Edit", modifier = Modifier.size(14.dp))
+                                                        Spacer(modifier = Modifier.width(4.dp))
+                                                        Text("Edit", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                                    }
+                                                    OutlinedButton(
+                                                        onClick = {
+                                                            viewModel.deleteProduct(prod)
+                                                            Toast.makeText(context, "Product deleted.", Toast.LENGTH_SHORT).show()
+                                                        },
+                                                        modifier = Modifier.height(34.dp),
+                                                        shape = RoundedCornerShape(8.dp),
+                                                        border = BorderStroke(1.dp, AccentRed),
+                                                        colors = ButtonDefaults.outlinedButtonColors(contentColor = AccentRed),
+                                                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp)
+                                                    ) {
+                                                        Icon(Icons.Default.Delete, contentDescription = "Delete", modifier = Modifier.size(14.dp))
+                                                        Spacer(modifier = Modifier.width(4.dp))
+                                                        Text("Delete", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                                    }
                                                 }
                                             }
                                         }
@@ -7785,6 +8218,15 @@ fun SellerPanelScreen(
                         )
                     }
 
+                    OutlinedTextField(
+                        value = newProdStock,
+                        onValueChange = { newProdStock = it.filter { ch -> ch.isDigit() } },
+                        label = { Text("Available Stock") },
+                        modifier = Modifier.fillMaxWidth().testTag("add_product_stock"),
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
+                    )
+
                     // Simple Category text input or dropdown
                     OutlinedTextField(
                         value = newProdCat,
@@ -7889,9 +8331,10 @@ fun SellerPanelScreen(
                         onClick = {
                             val price = newProdPrice.toDoubleOrNull()
                             val origPrice = newProdOrigPrice.toDoubleOrNull()
+                            val stock = newProdStock.toIntOrNull()
                             val extraImagesStr = imageList.joinToString(",")
 
-                            if (newProdName.isNotBlank() && price != null && origPrice != null && newProdCat.isNotBlank() && imageList.isNotEmpty()) {
+                            if (newProdName.isNotBlank() && price != null && origPrice != null && stock != null && newProdCat.isNotBlank() && imageList.isNotEmpty()) {
                                 viewModel.addProduct(
                                     newProdName,
                                     price,
@@ -7899,6 +8342,7 @@ fun SellerPanelScreen(
                                     newProdCat,
                                     newProdDesc,
                                     currentUser?.email ?: "",
+                                    stock,
                                     extraImagesStr
                                 )
                                 showAddProductDialog = false
@@ -7906,13 +8350,14 @@ fun SellerPanelScreen(
                                 newProdName = ""
                                 newProdPrice = ""
                                 newProdOrigPrice = ""
+                                newProdStock = ""
                                 newProdDesc = ""
                                 imageList = emptyList()
                                 Toast.makeText(context, "Product listed successfully on the Bazaar!", Toast.LENGTH_SHORT).show()
                             } else if (imageList.isEmpty()) {
                                 Toast.makeText(context, "Please upload at least one product photo.", Toast.LENGTH_SHORT).show()
                             } else {
-                                Toast.makeText(context, "Please enter valid entries and prices.", Toast.LENGTH_SHORT).show()
+                                Toast.makeText(context, "Please enter valid entries, prices and stock.", Toast.LENGTH_SHORT).show()
                             }
                         },
                         colors = ButtonDefaults.buttonColors(containerColor = DarkGreenPrimary),
@@ -7920,6 +8365,135 @@ fun SellerPanelScreen(
                         shape = RoundedCornerShape(10.dp)
                     ) {
                         Text("Publish Product", color = CustomWhite)
+                    }
+                }
+            }
+        }
+    }
+
+    editingProduct?.let { productToEdit ->
+        var editProdName by remember(productToEdit.id) { mutableStateOf(productToEdit.name) }
+        var editProdPrice by remember(productToEdit.id) { mutableStateOf(productToEdit.price.toString()) }
+        var editProdOrigPrice by remember(productToEdit.id) { mutableStateOf(productToEdit.originalPrice.toString()) }
+        var editProdStock by remember(productToEdit.id) { mutableStateOf(productToEdit.stock.toString()) }
+        var editProdCat by remember(productToEdit.id) { mutableStateOf(productToEdit.category) }
+        var editProdDesc by remember(productToEdit.id) { mutableStateOf(productToEdit.description) }
+
+        Dialog(onDismissRequest = { editingProduct = null }) {
+            Surface(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 12.dp),
+                shape = RoundedCornerShape(16.dp),
+                color = CustomWhite,
+                tonalElevation = 8.dp
+            ) {
+                Column(
+                    modifier = Modifier
+                        .padding(20.dp)
+                        .verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "Edit Product",
+                            fontWeight = FontWeight.Black,
+                            style = MaterialTheme.typography.titleMedium,
+                            color = DarkGreenPrimary
+                        )
+                        IconButton(onClick = { editingProduct = null }) {
+                            Icon(Icons.Default.Close, contentDescription = "Close", tint = RichBlack)
+                        }
+                    }
+
+                    OutlinedTextField(
+                        value = editProdName,
+                        onValueChange = { editProdName = it },
+                        label = { Text("Product Title Name") },
+                        modifier = Modifier.fillMaxWidth().testTag("edit_product_title"),
+                        singleLine = true
+                    )
+
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        OutlinedTextField(
+                            value = editProdPrice,
+                            onValueChange = { editProdPrice = it },
+                            label = { Text("Offer Price ($)") },
+                            modifier = Modifier.weight(1f).testTag("edit_product_price"),
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
+                        )
+
+                        OutlinedTextField(
+                            value = editProdOrigPrice,
+                            onValueChange = { editProdOrigPrice = it },
+                            label = { Text("Original Price ($)") },
+                            modifier = Modifier.weight(1f).testTag("edit_product_orig_price"),
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
+                        )
+                    }
+
+                    OutlinedTextField(
+                        value = editProdStock,
+                        onValueChange = { editProdStock = it.filter { ch -> ch.isDigit() } },
+                        label = { Text("Available Stock") },
+                        modifier = Modifier.fillMaxWidth().testTag("edit_product_stock"),
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
+                    )
+
+                    OutlinedTextField(
+                        value = editProdCat,
+                        onValueChange = { editProdCat = it },
+                        label = { Text("Category") },
+                        modifier = Modifier.fillMaxWidth().testTag("edit_product_category"),
+                        singleLine = true
+                    )
+
+                    OutlinedTextField(
+                        value = editProdDesc,
+                        onValueChange = { editProdDesc = it },
+                        label = { Text("Product Description details") },
+                        modifier = Modifier.fillMaxWidth().testTag("edit_product_desc"),
+                        maxLines = 4,
+                        singleLine = false
+                    )
+
+                    Button(
+                        onClick = {
+                            val price = editProdPrice.toDoubleOrNull()
+                            val originalPrice = editProdOrigPrice.toDoubleOrNull()
+                            val stock = editProdStock.toIntOrNull()
+
+                            if (editProdName.isNotBlank() && price != null && originalPrice != null && stock != null && editProdCat.isNotBlank()) {
+                                viewModel.updateProduct(
+                                    productToEdit.copy(
+                                        name = editProdName.trim(),
+                                        price = price,
+                                        originalPrice = originalPrice,
+                                        category = editProdCat.trim(),
+                                        description = editProdDesc.trim(),
+                                        stock = stock
+                                    )
+                                )
+                                editingProduct = null
+                                Toast.makeText(context, "Product updated.", Toast.LENGTH_SHORT).show()
+                            } else {
+                                Toast.makeText(context, "Please enter valid product details.", Toast.LENGTH_SHORT).show()
+                            }
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = DarkGreenPrimary),
+                        modifier = Modifier.fillMaxWidth().height(48.dp),
+                        shape = RoundedCornerShape(10.dp)
+                    ) {
+                        Icon(Icons.Default.Save, contentDescription = "Save", tint = CustomWhite, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("Save Product", color = CustomWhite)
                     }
                 }
             }

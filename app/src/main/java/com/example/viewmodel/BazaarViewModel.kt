@@ -156,7 +156,8 @@ fun Product.toMap(): Map<String, Any> {
         "description" to description,
         "isFeatured" to isFeatured,
         "sellerEmail" to sellerEmail,
-        "extraImages" to extraImages
+        "extraImages" to extraImages,
+        "stock" to stock
     )
 }
 
@@ -172,7 +173,8 @@ fun Map<String, Any?>.toProduct(): Product {
         description = this["description"] as? String ?: "",
         isFeatured = this["isFeatured"] as? Boolean ?: false,
         sellerEmail = this["sellerEmail"] as? String ?: "",
-        extraImages = this["extraImages"] as? String ?: ""
+        extraImages = this["extraImages"] as? String ?: "",
+        stock = (this["stock"] as? Number)?.toInt() ?: 999
     )
 }
 
@@ -406,6 +408,9 @@ class BazaarViewModel(application: Application) : AndroidViewModel(application) 
     val shortcuts: StateFlow<List<Shortcut>> = repository.getAllShortcuts()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
+    val serviceAreas: StateFlow<List<ServiceArea>> = repository.getServiceAreas()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
     val appConfig: StateFlow<AppConfig> = repository.getAppConfig()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), AppConfig())
 
@@ -610,6 +615,12 @@ class BazaarViewModel(application: Application) : AndroidViewModel(application) 
     // Validate a coupon code against dynamic coupons from Firestore
     fun validateCoupon(code: String): Coupon? {
         return coupons.value.find { it.code.equals(code.trim(), ignoreCase = true) && it.isActive }
+    }
+
+    fun isPincodeDeliverable(pinCode: String): Boolean {
+        val normalized = pinCode.filter { it.isDigit() }
+        if (normalized.isBlank()) return false
+        return serviceAreas.value.any { it.pinCode.filter { ch -> ch.isDigit() } == normalized }
     }
 
     fun wipeDummyData(onComplete: () -> Unit) {
@@ -1055,10 +1066,13 @@ class BazaarViewModel(application: Application) : AndroidViewModel(application) 
     // --- Actions: Cart ---
     fun addToCart(product: Product) {
         val user = _currentUser.value ?: return
+        if (product.stock <= 0) return
         viewModelScope.launch {
             val existing = _currentCart.value.find { it.productId == product.id }
             if (existing != null) {
-                repository.updateCartQuantity(existing.id, existing.quantity + 1)
+                if (existing.quantity < product.stock) {
+                    repository.updateCartQuantity(existing.id, existing.quantity + 1)
+                }
             } else {
                 repository.insertCartItem(CartItem(email = user.email, productId = product.id))
             }
@@ -1067,7 +1081,10 @@ class BazaarViewModel(application: Application) : AndroidViewModel(application) 
 
     fun increaseCartQty(item: CartItem) {
         viewModelScope.launch {
-            repository.updateCartQuantity(item.id, item.quantity + 1)
+            val product = allProducts.value.find { it.id == item.productId }
+            if (product == null || item.quantity < product.stock) {
+                repository.updateCartQuantity(item.id, item.quantity + 1)
+            }
         }
     }
 
@@ -1128,6 +1145,7 @@ class BazaarViewModel(application: Application) : AndroidViewModel(application) 
                 paymentTransactionId = paymentTransactionId
             )
             repository.insertOrder(newOrder)
+            reduceStockForOrderSummary(summary)
             if (clearCartAfterCheckout) {
                 repository.clearCart(user.email)
             }
@@ -1141,6 +1159,20 @@ class BazaarViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    private suspend fun reduceStockForOrderSummary(summary: String) {
+        summary.split(",")
+            .map { it.trim() }
+            .filter { it.isNotBlank() }
+            .forEach { itemText ->
+                val quantity = itemText.substringAfterLast(" x", "1").trim().toIntOrNull() ?: 1
+                val productName = itemText.substringBeforeLast(" x", itemText).trim()
+                val product = allProducts.value.find { it.name.equals(productName, ignoreCase = true) }
+                if (product != null) {
+                    repository.insertProduct(product.copy(stock = (product.stock - quantity).coerceAtLeast(0)))
+                }
+            }
+    }
+
     // --- Actions: Seller Panel Support ---
     fun addProduct(
         name: String,
@@ -1149,6 +1181,7 @@ class BazaarViewModel(application: Application) : AndroidViewModel(application) 
         category: String,
         description: String,
         sellerEmail: String,
+        stock: Int,
         extraImages: String = ""
     ) {
         viewModelScope.launch {
@@ -1170,16 +1203,22 @@ class BazaarViewModel(application: Application) : AndroidViewModel(application) 
                 description = description,
                 isFeatured = false,
                 sellerEmail = sellerEmail,
-                extraImages = secondaryImages
+                extraImages = secondaryImages,
+                stock = stock.coerceAtLeast(0)
             )
             repository.insertProduct(newProd)
-            try {
-                FirebaseFirestore.getInstance().collection("products")
-                    .document(id.toString())
-                    .set(newProd.toMap())
-            } catch (e: Exception) {
-                e.printStackTrace()
-            }
+        }
+    }
+
+    fun updateProduct(product: Product) {
+        viewModelScope.launch {
+            repository.insertProduct(product.copy(stock = product.stock.coerceAtLeast(0)))
+        }
+    }
+
+    fun deleteProduct(product: Product) {
+        viewModelScope.launch {
+            repository.deleteProduct(product.id)
         }
     }
 

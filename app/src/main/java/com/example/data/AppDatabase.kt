@@ -78,7 +78,8 @@ data class Product(
     val description: String,
     val isFeatured: Boolean = false,
     val sellerEmail: String = "", // tags who listed the product
-    val extraImages: String = "" // comma-separated secondary images
+    val extraImages: String = "", // comma-separated secondary images
+    val stock: Int = 999
 )
 
 // --- Entity: CartItem ---
@@ -159,6 +160,12 @@ data class Shortcut(
     val sortOrder: Int = 0
 )
 
+data class ServiceArea(
+    val id: String = "",
+    val city: String = "",
+    val pinCode: String = ""
+)
+
 data class AppConfig(
     val categories: List<String> = listOf("All", "Electronics", "Fresh Products", "Fashion", "Home & Kitchen"),
     val languages: List<String> = listOf("English", "Español", "Français", "Deutsch", "Hindi", "Bengali"),
@@ -190,6 +197,9 @@ interface AppDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertProduct(product: Product)
+
+    @Query("DELETE FROM products WHERE id = :productId")
+    suspend fun deleteProduct(productId: Int)
 
     @Query("SELECT COUNT(*) FROM products")
     suspend fun getProductCount(): Int
@@ -246,7 +256,7 @@ interface AppDao {
 // --- App Database ---
 @Database(
     entities = [User::class, Product::class, CartItem::class, WishlistItem::class, Order::class],
-    version = 7,
+    version = 8,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -400,7 +410,8 @@ class AppRepository(private val appDao: AppDao) {
             description = map["description"] as? String ?: "",
             isFeatured = map["isFeatured"] as? Boolean ?: false,
             sellerEmail = map["sellerEmail"] as? String ?: "",
-            extraImages = map["extraImages"] as? String ?: ""
+            extraImages = map["extraImages"] as? String ?: "",
+            stock = (map["stock"] as? Number)?.toInt() ?: 999
         )
     }
 
@@ -416,7 +427,8 @@ class AppRepository(private val appDao: AppDao) {
             "description" to p.description,
             "isFeatured" to p.isFeatured,
             "sellerEmail" to p.sellerEmail,
-            "extraImages" to p.extraImages
+            "extraImages" to p.extraImages,
+            "stock" to p.stock
         )
     }
 
@@ -621,10 +633,32 @@ class AppRepository(private val appDao: AppDao) {
 
     suspend fun insertProduct(product: Product) {
         try {
+            appDao.insertProduct(product)
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+        try {
             FirebaseFirestore.getInstance()
                 .collection("products")
                 .document(product.id.toString())
                 .set(productToMap(product))
+                .awaitTask()
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
+    suspend fun deleteProduct(productId: Int) {
+        try {
+            appDao.deleteProduct(productId)
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+        try {
+            FirebaseFirestore.getInstance()
+                .collection("products")
+                .document(productId.toString())
+                .delete()
                 .awaitTask()
         } catch (e: Exception) {
             e.printStackTrace()
@@ -996,6 +1030,30 @@ class AppRepository(private val appDao: AppDao) {
                 } else {
                     trySend(AppConfig())
                 }
+            }
+        awaitClose { listener.remove() }
+    }
+
+    fun getServiceAreas(): Flow<List<ServiceArea>> = callbackFlow {
+        val listener = FirebaseFirestore.getInstance()
+            .collection("service_areas")
+            .addSnapshotListener { snapshot, error ->
+                if (error != null) {
+                    close(error)
+                    return@addSnapshotListener
+                }
+                val areas = snapshot?.documents
+                    ?.mapNotNull { doc ->
+                        val data = doc.data ?: return@mapNotNull null
+                        ServiceArea(
+                            id = doc.id,
+                            city = data["city"] as? String ?: "",
+                            pinCode = data["pinCode"] as? String ?: ""
+                        )
+                    }
+                    ?.sortedWith(compareBy<ServiceArea> { it.city }.thenBy { it.pinCode })
+                    ?: emptyList()
+                trySend(areas)
             }
         awaitClose { listener.remove() }
     }
