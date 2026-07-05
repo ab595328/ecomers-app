@@ -411,7 +411,7 @@ function App() {
       shopAddress: user.requestedShopAddress || user.shopAddress,
       shopAddressLat: user.requestedShopAddress ? user.requestedShopAddressLat : user.shopAddressLat || 0,
       shopAddressLng: user.requestedShopAddress ? user.requestedShopAddressLng : user.shopAddressLng || 0,
-      
+
       deliveryMobile: user.requestedDeliveryMobile || user.deliveryMobile || "",
       deliveryVehicleType: user.requestedDeliveryVehicleType || user.deliveryVehicleType || "",
       deliveryVehicleNumber: user.requestedDeliveryVehicleNumber || user.deliveryVehicleNumber || "",
@@ -595,7 +595,7 @@ function App() {
     const discountPercent = parseInt(newCouponDiscount, 10);
     const minOrderAmount = parseFloat(newCouponMinOrder || 0);
     const maxDiscount = parseFloat(newCouponMaxDiscount || 999999);
-    
+
     if (!newCouponCode.trim() || Number.isNaN(discountPercent) || discountPercent <= 0 || discountPercent > 100) {
       alert('Please fill in a valid code and discount percent (1-100).');
       return;
