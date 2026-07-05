@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState, useRef } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   AlertTriangle,
   CheckCircle,
@@ -16,10 +16,8 @@ import {
   Star,
   Trash2,
   Users as UsersIcon,
-  MapPin,
-  Tag,
-  Ban,
-  UserX
+  Settings,
+  Ticket
 } from 'lucide-react';
 import {
   collection,
@@ -49,26 +47,17 @@ const defaultProducts = [
 
 const defaultUsers = [
   { email: 'admin@bazaar.com', name: 'System Administrator', password: 'admin123', role: 'Admin', isPlusMember: true, savedAddress: '00123 Green Bazaar Lane, Eco City, 54002', notificationsEnabled: true, selectedLanguage: 'English' },
-  { email: 'buyer@bazaar.com', name: 'Green Buyer', role: 'User', isPlusMember: true, savedAddress: '22 Market Street, Eco City', phone: '+91 8888811111', isDisabled: false },
-  { email: 'seller@store.com', name: 'Organic Farms Co.', role: 'Seller', isSellerVerified: true, isSellerVerificationPending: false, shopName: 'Organic Farms', shopAddress: 'Green Valley Farm Road', sellerMobile: '+91 7777711111', sellerGstNumber: 'GST-ZVB-1001', sellerAadhaar: '1234-5678-9012', sellerPanCard: 'ABCDE1234F', sellerBankAccount: '98765432101', sellerIfsc: 'BARB0ECOCIT', bankName: 'Bank of Baroda', bankHolderName: 'Organic Farms Co.' },
-  { email: 'pending.seller@store.com', name: 'Fresh Cart Seller', role: 'Seller', isSellerVerified: false, isSellerVerificationPending: true, shopName: 'Fresh Cart', shopAddress: 'Unit 8, Local Bazaar', sellerMobile: '+91 7777722222', sellerAadhaar: '9876-5432-1098', sellerPanCard: 'XYZWR9876A', sellerBankAccount: '112233445566', sellerIfsc: 'SBIN0001234', bankName: 'State Bank of India', bankHolderName: 'Fresh Cart Seller', editRequestPending: true, requestedName: 'Fresh Cart Super Store', requestedShopName: 'Fresh Cart Mega Mart' },
-  { email: 'rider@bazaar.com', name: 'Fast Courier Rider', role: 'DeliveryPartner', isDeliveryPartnerVerified: true, deliveryMobile: '+91 9999911111', deliveryVehicleType: 'Electric Scooter', deliveryVehicleNumber: 'DL-3C-EC-9999', deliveryEmergencyContact: '+91 9999922222', deliveryBankAccount: '888877776666', deliveryIfsc: 'HDFC0000456', bankName: 'HDFC Bank', bankHolderName: 'Fast Courier Rider' },
-  { email: 'pending.rider@bazaar.com', name: 'New Delivery Partner', role: 'DeliveryPartner', isDeliveryPartnerVerified: false, deliveryMobile: '+91 9999933333', deliveryVehicleType: 'Bike', deliveryVehicleNumber: 'DL-4S-NP-2211', deliveryBankAccount: '555566667777', deliveryIfsc: 'ICIC0000789', bankName: 'ICICI Bank', bankHolderName: 'New Delivery Partner' }
+  { email: 'buyer@bazaar.com', name: 'Green Buyer', role: 'User', isPlusMember: true, savedAddress: '22 Market Street, Eco City', phone: '+91 8888811111' },
+  { email: 'seller@store.com', name: 'Organic Farms Co.', role: 'Seller', isSellerVerified: true, isSellerVerificationPending: false, shopName: 'Organic Farms', shopAddress: 'Green Valley Farm Road', sellerMobile: '+91 7777711111', sellerGstNumber: 'GST-ZVB-1001' },
+  { email: 'pending.seller@store.com', name: 'Fresh Cart Seller', role: 'Seller', isSellerVerified: false, isSellerVerificationPending: true, shopName: 'Fresh Cart', shopAddress: 'Unit 8, Local Bazaar', sellerMobile: '+91 7777722222' },
+  { email: 'rider@bazaar.com', name: 'Fast Courier Rider', role: 'DeliveryPartner', isDeliveryPartnerVerified: true, deliveryMobile: '+91 9999911111', deliveryVehicleType: 'Electric Scooter', deliveryVehicleNumber: 'DL-3C-EC-9999', deliveryEmergencyContact: '+91 9999922222' },
+  { email: 'pending.rider@bazaar.com', name: 'New Delivery Partner', role: 'DeliveryPartner', isDeliveryPartnerVerified: false, deliveryMobile: '+91 9999933333', deliveryVehicleType: 'Bike', deliveryVehicleNumber: 'DL-4S-NP-2211' }
 ];
+
 
 const defaultOrders = [
-  { orderId: 'ORD-9872', email: 'buyer@bazaar.com', orderDate: Date.now() - 3600000 * 2, totalAmount: 134.98, status: 'Processing', itemsSummary: '1x ZYL Sound Pro Wireless ANC, 1x Organic Apples', paymentMode: 'Card ending in 4242', deliveryAddress: '22 Market Street, Eco City', couponApplied: 'GREEN10', deliveryPartnerEmail: 'rider@bazaar.com', deliveryStatus: 'Assigned', sellerConfirmed: true, sellerEmail: 'seller@store.com' },
-  { orderId: 'ORD-5431', email: 'buyer@bazaar.com', orderDate: Date.now() - 3600000 * 24, totalAmount: 4.99, status: 'Delivered', itemsSummary: '1x Premium Farms Organic Apples (1kg)', paymentMode: 'Wallet', deliveryAddress: '22 Market Street, Eco City', deliveryPartnerEmail: 'rider@bazaar.com', deliveryStatus: 'Delivered', sellerConfirmed: true, sellerEmail: 'seller@store.com' }
-];
-
-const defaultAreas = [
-  { id: 'area_1', city: 'Eco City', pinCode: '54002' },
-  { id: 'area_2', city: 'Green Valley', pinCode: '56001' }
-];
-
-const defaultCoupons = [
-  { id: 'coupon_1', code: 'GREEN10', amount: 10 },
-  { id: 'coupon_2', code: 'BAZAAR50', amount: 50 }
+  { orderId: 'ORD-9872', email: 'buyer@bazaar.com', orderDate: Date.now() - 3600000 * 2, totalAmount: 134.98, status: 'Processing', itemsSummary: '1x ZYL Sound Pro Wireless ANC, 1x Organic Apples', paymentMode: 'Card ending in 4242', deliveryAddress: '22 Market Street, Eco City', couponApplied: 'GREEN10', deliveryPartnerEmail: '', deliveryStatus: '', sellerConfirmed: false },
+  { orderId: 'ORD-5431', email: 'buyer@bazaar.com', orderDate: Date.now() - 3600000 * 24, totalAmount: 4.99, status: 'Delivered', itemsSummary: '1x Premium Farms Organic Apples (1kg)', paymentMode: 'Wallet', deliveryAddress: '22 Market Street, Eco City', deliveryPartnerEmail: 'rider@bazaar.com', deliveryStatus: 'Delivered', sellerConfirmed: true }
 ];
 
 function roleLabel(role) {
@@ -105,9 +94,6 @@ function App() {
   const [users, setUsers] = useState([]);
   const [products, setProducts] = useState([]);
   const [orders, setOrders] = useState([]);
-  const [areas, setAreas] = useState([]);
-  const [coupons, setCoupons] = useState([]);
-  
   const [loading, setLoading] = useState(false);
   const [dbError, setDbError] = useState(null);
   const [useMockData, setUseMockData] = useState(false);
@@ -120,14 +106,6 @@ function App() {
   const [expandedUserEmail, setExpandedUserEmail] = useState('');
   const [expandedOrderId, setExpandedOrderId] = useState('');
 
-  // Service Area states
-  const [newCityName, setNewCityName] = useState('');
-  const [newPinCode, setNewPinCode] = useState('');
-
-  // Coupons states
-  const [newCouponCode, setNewCouponCode] = useState('');
-  const [newCouponAmount, setNewCouponAmount] = useState('');
-
   const [showProductModal, setShowProductModal] = useState(false);
   const [newProductName, setNewProductName] = useState('');
   const [newProductPrice, setNewProductPrice] = useState('');
@@ -137,7 +115,15 @@ function App() {
   const [newProductSeller, setNewProductSeller] = useState('admin@bazaar.com');
   const [newProductFeatured, setNewProductFeatured] = useState(false);
 
-  const fileInputRef = useRef(null);
+  // Coupon management states
+  const [coupons, setCoupons] = useState([]);
+  const [showCouponModal, setShowCouponModal] = useState(false);
+  const [newCouponCode, setNewCouponCode] = useState('');
+  const [newCouponDiscount, setNewCouponDiscount] = useState('');
+  const [newCouponMinOrder, setNewCouponMinOrder] = useState('');
+  const [newCouponMaxDiscount, setNewCouponMaxDiscount] = useState('');
+  const [newCouponDesc, setNewCouponDesc] = useState('');
+  const [newCouponActive, setNewCouponActive] = useState(true);
 
   useEffect(() => {
     const savedSession = window.localStorage.getItem('bazaarAdminSession');
@@ -160,7 +146,6 @@ function App() {
       setUsers([]);
       setProducts([]);
       setOrders([]);
-      setAreas([]);
       setCoupons([]);
       setLoading(false);
       return undefined;
@@ -170,8 +155,7 @@ function App() {
       setUsers(defaultUsers);
       setProducts(defaultProducts);
       setOrders(defaultOrders);
-      setAreas(defaultAreas);
-      setCoupons(defaultCoupons);
+      setCoupons([]);
       setLoading(false);
       return undefined;
     }
@@ -179,7 +163,7 @@ function App() {
     let unsubscribeUsers = () => { };
     let unsubscribeProducts = () => { };
     let unsubscribeOrders = () => { };
-    let unsubscribeAreas = () => { };
+    let unsubscribeConfig = () => { };
     let unsubscribeCoupons = () => { };
 
     try {
@@ -187,7 +171,7 @@ function App() {
       unsubscribeUsers = onSnapshot(
         collection(db, 'users'),
         snapshot => {
-          const list = snapshot.docs.map(userDoc => ({ ...userDoc.data(), docId: userDoc.id, email: userDoc.data().email || userDoc.id }));
+          const list = snapshot.docs.map(userDoc => ({ ...userDoc.data(), email: userDoc.id || userDoc.data().email }));
           setUsers(list.sort((a, b) => (a.role || '').localeCompare(b.role || '') || (a.email || '').localeCompare(b.email || '')));
           setDbError(null);
         },
@@ -224,29 +208,26 @@ function App() {
         }
       );
 
-      unsubscribeAreas = onSnapshot(
-        collection(db, 'service_areas'),
-        snapshot => {
-          const list = snapshot.docs.map(areaDoc => ({ ...areaDoc.data(), id: areaDoc.id }));
-          setAreas(list.sort((a, b) => (a.city || '').localeCompare(b.city || '') || (a.pinCode || '').localeCompare(b.pinCode || '')));
-        },
-        err => {
-          console.warn('Firestore service areas sync failed:', err);
-        }
-      );
-
       unsubscribeCoupons = onSnapshot(
         collection(db, 'coupons'),
         snapshot => {
-          const list = snapshot.docs.map(couponDoc => ({ ...couponDoc.data(), id: couponDoc.id }));
-          setCoupons(list.sort((a, b) => (a.code || '').localeCompare(b.code || '')));
+          const list = snapshot.docs.map(couponDoc => ({ ...couponDoc.data(), code: couponDoc.data().code || couponDoc.id }));
+          setCoupons(list);
         },
         err => {
           console.warn('Firestore coupons sync failed:', err);
         }
       );
+
+      unsubscribeConfig = onSnapshot(doc(db, 'app_config', 'main'), configDoc => {
+        const config = configDoc.exists() ? configDoc.data() : {};
+        setAppConfig(config);
+        setServiceCitiesText((config.serviceCities || []).join(', '));
+        setServicePincodesText((config.servicePincodes || []).join(', '));
+        setPayoutDelayHours(String(config.payoutDelayHours ?? 24));
+      });
     } catch (error) {
-      console.error('Firebase init failed, switching to mock:', error);
+      console.warn('Firebase snapshot initialization error:', error);
       setDbError('Invalid Firebase configuration.');
       setLoading(false);
     }
@@ -255,28 +236,14 @@ function App() {
       unsubscribeUsers();
       unsubscribeProducts();
       unsubscribeOrders();
-      unsubscribeAreas();
+      unsubscribeConfig();
       unsubscribeCoupons();
     };
   }, [authUser, useMockData]);
 
-  const hasEditRequest = (user) => {
-    return !!(user.editRequestPending || 
-              (user.editRequest && Object.keys(user.editRequest).length > 0) || 
-              user.requestedName || 
-              user.requestedShopName || 
-              user.requestedShopAddress || 
-              user.requestedSellerMobile || 
-              user.requestedDeliveryMobile || 
-              user.requestedDeliveryVehicleType || 
-              user.requestedDeliveryVehicleNumber);
-  };
-
-  // Metric calculation variables
   const activeSellersCount = users.filter(u => u.role === 'Seller' && u.isSellerVerified).length;
-  const pendingSellersCount = users.filter(u => u.role === 'Seller' && !u.isSellerVerified && !u.isSellerRejected).length;
-  const pendingEditRequestsCount = users.filter(hasEditRequest).length;
-  const pendingPartnersCount = users.filter(u => u.role === 'DeliveryPartner' && !u.isDeliveryPartnerVerified && !u.isDeliveryPartnerRejected).length;
+  const pendingSellersCount = users.filter(u => u.role === 'Seller' && (u.isSellerVerificationPending || !u.isSellerVerified)).length;
+  const pendingPartnersCount = users.filter(u => u.role === 'DeliveryPartner' && !u.isDeliveryPartnerVerified).length;
   const buyerCount = users.filter(u => !u.role || u.role === 'User').length;
   const sellerCount = users.filter(u => u.role === 'Seller').length;
   const partnerCount = users.filter(u => u.role === 'DeliveryPartner').length;
@@ -308,50 +275,6 @@ function App() {
       return matchesStatus && (!query || searchBlob.includes(query));
     });
   }, [orderSearch, orderStatusFilter, orders]);
-
-  // Helper getters for order view
-  const getOrderCustomerName = (order) => {
-    if (order.userName) return order.userName;
-    const found = users.find(u => u.email === order.email);
-    return found?.name || 'Guest User';
-  };
-
-  const getOrderSeller = (order) => {
-    if (order.sellerName) return order.sellerName;
-    if (order.sellerEmail) {
-      const found = users.find(u => u.email === order.sellerEmail);
-      return found?.shopName || found?.name || order.sellerEmail;
-    }
-    if (order.itemsSummary) {
-      const matchingProduct = products.find(p => order.itemsSummary.includes(p.name));
-      if (matchingProduct && matchingProduct.sellerEmail) {
-        const found = users.find(u => u.email === matchingProduct.sellerEmail);
-        return found?.shopName || found?.name || matchingProduct.sellerEmail;
-      }
-    }
-    return 'System Store';
-  };
-
-  const getOrderDeliveryPartner = (order) => {
-    if (order.deliveryPartnerName) return order.deliveryPartnerName;
-    if (order.deliveryPartnerEmail) {
-      const found = users.find(u => u.email === order.deliveryPartnerEmail);
-      return found?.name || order.deliveryPartnerEmail;
-    }
-    return 'Not Assigned';
-  };
-
-  // Helper getter for profile edit requests
-  const getRequestedValue = (user, field, fallback) => {
-    if (user.editRequest && user.editRequest[field] !== undefined && user.editRequest[field] !== null) {
-      return user.editRequest[field];
-    }
-    const flatField = 'requested' + field.charAt(0).toUpperCase() + field.slice(1);
-    if (user[flatField] !== undefined && user[flatField] !== null) {
-      return user[flatField];
-    }
-    return fallback;
-  };
 
   const handleLogin = async event => {
     event.preventDefault();
@@ -398,12 +321,12 @@ function App() {
     setDbError(null);
   };
 
-  const seedFirestoreDatabase = async () => {
+  const _seedFirestoreDatabase = async () => {
     if (useMockData) {
       alert('Please connect to your live Firebase project to seed data.');
       return;
     }
-    if (!window.confirm('This will seed default users, products, orders, service areas, and coupons to your Firestore database. Continue?')) return;
+    if (!window.confirm('This will seed default users, products, and orders to your Firestore database. Continue?')) return;
 
     try {
       setLoading(true);
@@ -411,9 +334,6 @@ function App() {
       for (const u of defaultUsers) await setDoc(doc(db, 'users', u.email), u);
       for (const p of defaultProducts) await setDoc(doc(db, 'products', p.id.toString()), p);
       for (const o of defaultOrders) await setDoc(doc(db, 'orders', o.orderId), o);
-      for (const a of defaultAreas) await setDoc(doc(db, 'service_areas', a.id), { city: a.city, pinCode: a.pinCode });
-      for (const c of defaultCoupons) await setDoc(doc(db, 'coupons', c.code), { code: c.code, amount: c.amount });
-
       setDbStatusMsg('Database successfully seeded with default catalog data.');
       setTimeout(() => setDbStatusMsg(''), 5000);
     } catch (e) {
@@ -423,13 +343,11 @@ function App() {
     }
   };
 
-  const exportDatabaseToJson = () => {
+  const _exportDatabaseToJson = () => {
     const dataExport = {
       users,
       products,
       orders,
-      service_areas: areas,
-      coupons: coupons,
       exportedAt: new Date().toISOString(),
       projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID
     };
@@ -442,7 +360,7 @@ function App() {
     downloadAnchor.remove();
   };
 
-  const importDatabaseFromJson = event => {
+  const _importDatabaseFromJson = event => {
     if (useMockData) {
       alert('Please connect to your live Firebase project to import data.');
       return;
@@ -455,26 +373,13 @@ function App() {
         if (!importedData.users || !importedData.products || !importedData.orders) {
           throw new Error('Invalid backup file format. Must contain users, products, and orders.');
         }
-        if (!window.confirm(`Found ${importedData.users.length} users, ${importedData.products.length} products, ${importedData.orders.length} orders, ${importedData.service_areas?.length || 0} service areas, and ${importedData.coupons?.length || 0} coupons. Import them into your database?`)) return;
+        if (!window.confirm(`Found ${importedData.users.length} users, ${importedData.products.length} products, and ${importedData.orders.length} orders. Import them into your database?`)) return;
 
         setLoading(true);
         setDbStatusMsg('Importing data. Please wait...');
         for (const u of importedData.users) if (u.email) await setDoc(doc(db, 'users', u.email), u);
         for (const p of importedData.products) if (p.id) await setDoc(doc(db, 'products', p.id.toString()), p);
         for (const o of importedData.orders) if (o.orderId) await setDoc(doc(db, 'orders', o.orderId), o);
-        
-        if (importedData.service_areas) {
-          for (const a of importedData.service_areas) {
-            const id = a.id || `area_${Date.now()}_${Math.random()}`;
-            await setDoc(doc(db, 'service_areas', id), { city: a.city, pinCode: a.pinCode });
-          }
-        }
-        if (importedData.coupons) {
-          for (const c of importedData.coupons) {
-            if (c.code) await setDoc(doc(db, 'coupons', c.code), { code: c.code, amount: c.amount });
-          }
-        }
-
         setDbStatusMsg('Database backup successfully restored.');
         setTimeout(() => setDbStatusMsg(''), 5000);
       } catch (err) {
@@ -487,190 +392,89 @@ function App() {
     if (event.target.files[0]) fileReader.readAsText(event.target.files[0]);
   };
 
-  const patchUser = async (userOrEmail, payload) => {
-    let docId = '';
-    let email = '';
-    if (userOrEmail && typeof userOrEmail === 'object') {
-      docId = userOrEmail.docId || userOrEmail.email;
-      email = userOrEmail.email;
-    } else {
-      const found = users.find(u => u.email === userOrEmail);
-      docId = found?.docId || userOrEmail;
-      email = userOrEmail;
-    }
-
+  const patchUser = async (email, payload) => {
     if (useMockData) {
       setUsers(users.map(u => (u.email === email ? { ...u, ...payload } : u)));
       return;
     }
     try {
-      await updateDoc(doc(db, 'users', docId), payload);
+      await updateDoc(doc(db, 'users', email), payload);
     } catch (e) {
       alert(`Error updating user: ${e.message}`);
     }
   };
 
-  // Explicit verify and reject actions
-  const handleVerifySeller = (user, verify) => {
-    patchUser(user, {
-      isSellerVerified: verify,
-      isSellerVerificationPending: false,
-      isSellerRejected: !verify
-    });
-  };
+  const approveProfileEditRequest = async (email, user) => {
+    const payload = {
+      name: user.requestedName || user.name,
+      shopName: user.requestedShopName || user.shopName,
+      shopAddress: user.requestedShopAddress || user.shopAddress,
+      shopAddressLat: user.requestedShopAddress ? user.requestedShopAddressLat : user.shopAddressLat || 0,
+      shopAddressLng: user.requestedShopAddress ? user.requestedShopAddressLng : user.shopAddressLng || 0,
+      
+      deliveryMobile: user.requestedDeliveryMobile || user.deliveryMobile || "",
+      deliveryVehicleType: user.requestedDeliveryVehicleType || user.deliveryVehicleType || "",
+      deliveryVehicleNumber: user.requestedDeliveryVehicleNumber || user.deliveryVehicleNumber || "",
+      deliveryEmergencyContact: user.requestedDeliveryEmergencyContact || user.deliveryEmergencyContact || "",
+      deliveryAddress: user.requestedDeliveryAddress || user.deliveryAddress || "",
+      deliveryAddressLat: user.requestedDeliveryAddress ? user.requestedDeliveryAddressLat : user.deliveryAddressLat || 0,
+      deliveryAddressLng: user.requestedDeliveryAddress ? user.requestedDeliveryAddressLng : user.deliveryAddressLng || 0,
 
-  const handleVerifyDeliveryPartner = (user, verify) => {
-    patchUser(user, {
-      isDeliveryPartnerVerified: verify,
-      isDeliveryPartnerVerificationPending: false,
-      isDeliveryPartnerRejected: !verify
-    });
-  };
-
-  // Edit requests approval and rejection
-  const handleApproveEditRequest = async user => {
-    const updatedFields = {
       editRequestPending: false,
+      requestedName: "",
+      requestedShopName: "",
+      requestedShopAddress: "",
+      requestedShopAddressLat: 0,
+      requestedShopAddressLng: 0,
+      requestedDeliveryMobile: "",
+      requestedDeliveryVehicleType: "",
+      requestedDeliveryVehicleNumber: "",
+      requestedDeliveryEmergencyContact: "",
+      requestedDeliveryAddress: "",
+      requestedDeliveryAddressLat: 0,
+      requestedDeliveryAddressLng: 0
     };
-    
-    const newName = getRequestedValue(user, 'name', null);
-    if (newName && newName !== user.name) updatedFields.name = newName;
-    
-    if (user.role === 'Seller') {
-      const newShopName = getRequestedValue(user, 'shopName', null);
-      const newShopAddress = getRequestedValue(user, 'shopAddress', null);
-      const newSellerMobile = getRequestedValue(user, 'sellerMobile', null);
-      
-      if (newShopName && newShopName !== user.shopName) updatedFields.shopName = newShopName;
-      if (newShopAddress && newShopAddress !== user.shopAddress) updatedFields.shopAddress = newShopAddress;
-      if (newSellerMobile && newSellerMobile !== user.sellerMobile) updatedFields.sellerMobile = newSellerMobile;
-    } else if (user.role === 'DeliveryPartner') {
-      const newDeliveryMobile = getRequestedValue(user, 'deliveryMobile', null);
-      const newVehicleType = getRequestedValue(user, 'deliveryVehicleType', null);
-      const newVehicleNumber = getRequestedValue(user, 'deliveryVehicleNumber', null);
-      
-      if (newDeliveryMobile && newDeliveryMobile !== user.deliveryMobile) updatedFields.deliveryMobile = newDeliveryMobile;
-      if (newVehicleType && newVehicleType !== user.deliveryVehicleType) updatedFields.deliveryVehicleType = newVehicleType;
-      if (newVehicleNumber && newVehicleNumber !== user.deliveryVehicleNumber) updatedFields.deliveryVehicleNumber = newVehicleNumber;
-    }
-
-    updatedFields.requestedName = null;
-    updatedFields.requestedShopName = null;
-    updatedFields.requestedShopAddress = null;
-    updatedFields.requestedSellerMobile = null;
-    updatedFields.requestedDeliveryMobile = null;
-    updatedFields.requestedDeliveryVehicleType = null;
-    updatedFields.requestedDeliveryVehicleNumber = null;
-    updatedFields.editRequest = null;
-
-    await patchUser(user, updatedFields);
-    alert('Profile edit request successfully approved and updated.');
+    await patchUser(email, payload);
   };
 
-  const handleRejectEditRequest = async user => {
-    if (!window.confirm('Are you sure you want to reject this profile edit request?')) return;
-    await patchUser(user, {
+  const rejectProfileEditRequest = async (email) => {
+    const payload = {
       editRequestPending: false,
-      requestedName: null,
-      requestedShopName: null,
-      requestedShopAddress: null,
-      requestedSellerMobile: null,
-      requestedDeliveryMobile: null,
-      requestedDeliveryVehicleType: null,
-      requestedDeliveryVehicleNumber: null,
-      editRequest: null
-    });
-    alert('Profile edit request rejected.');
+      requestedName: "",
+      requestedShopName: "",
+      requestedShopAddress: "",
+      requestedShopAddressLat: 0,
+      requestedShopAddressLng: 0,
+      requestedDeliveryMobile: "",
+      requestedDeliveryVehicleType: "",
+      requestedDeliveryVehicleNumber: "",
+      requestedDeliveryEmergencyContact: "",
+      requestedDeliveryAddress: "",
+      requestedDeliveryAddressLat: 0,
+      requestedDeliveryAddressLng: 0
+    };
+    await patchUser(email, payload);
   };
+
+  const toggleSellerVerification = (email, currentStatus) => patchUser(email, {
+    isSellerVerified: !currentStatus,
+    isSellerVerificationPending: false
+  });
+
+  const toggleDeliveryVerification = (email, currentStatus) => patchUser(email, {
+    isDeliveryPartnerVerified: !currentStatus
+  });
 
   const deleteUser = async email => {
     if (!window.confirm(`Are you sure you want to delete user ${email}?`)) return;
-    const found = users.find(u => u.email === email);
-    const docId = found?.docId || email;
     if (useMockData) {
       setUsers(users.filter(u => u.email !== email));
       return;
     }
     try {
-      await deleteDoc(doc(db, 'users', docId));
+      await deleteDoc(doc(db, 'users', email));
     } catch (e) {
       alert(`Error deleting user: ${e.message}`);
-    }
-  };
-
-  // Service Areas CRUD
-  const handleAddArea = async e => {
-    e.preventDefault();
-    if (!newCityName || !newPinCode) {
-      alert('Please fill in both City Name and Pin Code.');
-      return;
-    }
-    const areaData = { city: newCityName.trim(), pinCode: newPinCode.trim() };
-    if (useMockData) {
-      const newId = `area_${Date.now()}`;
-      setAreas([...areas, { id: newId, ...areaData }]);
-      setNewCityName('');
-      setNewPinCode('');
-      return;
-    }
-    try {
-      const docRef = doc(collection(db, 'service_areas'));
-      await setDoc(docRef, areaData);
-      setNewCityName('');
-      setNewPinCode('');
-    } catch (e) {
-      alert(`Error adding area: ${e.message}`);
-    }
-  };
-
-  const handleDeleteArea = async id => {
-    if (!window.confirm('Are you sure you want to delete this service area?')) return;
-    if (useMockData) {
-      setAreas(areas.filter(a => a.id !== id));
-      return;
-    }
-    try {
-      await deleteDoc(doc(db, 'service_areas', id));
-    } catch (e) {
-      alert(`Error deleting area: ${e.message}`);
-    }
-  };
-
-  // Coupons CRUD
-  const handleAddCoupon = async e => {
-    e.preventDefault();
-    const amountVal = parseFloat(newCouponAmount);
-    if (!newCouponCode || Number.isNaN(amountVal) || amountVal <= 0) {
-      alert('Please enter a valid coupon code and offered amount.');
-      return;
-    }
-    const couponData = { code: newCouponCode.trim().toUpperCase(), amount: amountVal };
-    if (useMockData) {
-      const newId = `coupon_${Date.now()}`;
-      setCoupons([...coupons, { id: newId, ...couponData }]);
-      setNewCouponCode('');
-      setNewCouponAmount('');
-      return;
-    }
-    try {
-      await setDoc(doc(db, 'coupons', couponData.code), couponData);
-      setNewCouponCode('');
-      setNewCouponAmount('');
-    } catch (e) {
-      alert(`Error adding coupon: ${e.message}`);
-    }
-  };
-
-  const handleDeleteCoupon = async id => {
-    if (!window.confirm('Are you sure you want to delete this coupon?')) return;
-    if (useMockData) {
-      setCoupons(coupons.filter(c => c.id !== id));
-      return;
-    }
-    try {
-      await deleteDoc(doc(db, 'coupons', id));
-    } catch (e) {
-      alert(`Error deleting coupon: ${e.message}`);
     }
   };
 
@@ -761,6 +565,78 @@ function App() {
     }
   };
 
+  const toggleCouponActive = async (code, currentStatus) => {
+    if (useMockData) {
+      setCoupons(coupons.map(c => (c.code === code ? { ...c, isActive: !currentStatus } : c)));
+      return;
+    }
+    try {
+      await updateDoc(doc(db, 'coupons', code), { isActive: !currentStatus });
+    } catch (e) {
+      alert(`Error updating coupon: ${e.message}`);
+    }
+  };
+
+  const deleteCoupon = async code => {
+    if (!window.confirm(`Are you sure you want to delete coupon ${code}?`)) return;
+    if (useMockData) {
+      setCoupons(coupons.filter(c => c.code !== code));
+      return;
+    }
+    try {
+      await deleteDoc(doc(db, 'coupons', code));
+    } catch (e) {
+      alert(`Error deleting coupon: ${e.message}`);
+    }
+  };
+
+  const handleCreateCoupon = async e => {
+    e.preventDefault();
+    const discountPercent = parseInt(newCouponDiscount, 10);
+    const minOrderAmount = parseFloat(newCouponMinOrder || 0);
+    const maxDiscount = parseFloat(newCouponMaxDiscount || 999999);
+    
+    if (!newCouponCode.trim() || Number.isNaN(discountPercent) || discountPercent <= 0 || discountPercent > 100) {
+      alert('Please fill in a valid code and discount percent (1-100).');
+      return;
+    }
+
+    const codeUpper = newCouponCode.trim().toUpperCase();
+
+    const newCoup = {
+      code: codeUpper,
+      discountPercent,
+      description: newCouponDesc,
+      isActive: newCouponActive,
+      minOrderAmount,
+      maxDiscount
+    };
+
+    if (useMockData) {
+      setCoupons([...coupons, newCoup]);
+      setShowCouponModal(false);
+      resetCouponForm();
+      return;
+    }
+
+    try {
+      await setDoc(doc(db, 'coupons', codeUpper), newCoup);
+      setShowCouponModal(false);
+      resetCouponForm();
+    } catch (e) {
+      alert(`Error creating coupon: ${e.message}`);
+    }
+  };
+
+  const resetCouponForm = () => {
+    setNewCouponCode('');
+    setNewCouponDiscount('');
+    setNewCouponMinOrder('');
+    setNewCouponMaxDiscount('');
+    setNewCouponDesc('');
+    setNewCouponActive(true);
+  };
+
   if (authLoading) {
     return (
       <div className="auth-screen">
@@ -825,13 +701,13 @@ function App() {
             ['users', UsersIcon, 'Users'],
             ['products', ShoppingBag, 'Products'],
             ['orders', FileText, 'Orders'],
-            ['service_areas', MapPin, 'Service Areas'],
-            ['coupons', Tag, 'Coupons']
+            ['coupons', Ticket, 'Coupons'],
+            ['settings', Settings, 'Service Settings']
           ].map(([tab, Icon, label]) => (
             <button key={tab} className={`nav-item ${activeTab === tab ? 'active' : ''}`} onClick={() => setActiveTab(tab)}>
               <Icon size={20} />
               {label}
-              {tab === 'users' && pendingSellersCount + pendingPartnersCount + pendingEditRequestsCount > 0 && <span className="nav-count">{pendingSellersCount + pendingPartnersCount + pendingEditRequestsCount}</span>}
+              {tab === 'users' && pendingSellersCount + pendingPartnersCount > 0 && <span className="nav-count">{pendingSellersCount + pendingPartnersCount}</span>}
             </button>
           ))}
         </nav>
@@ -867,10 +743,7 @@ function App() {
                 <span>{dbError}</span>
               </div>
             </div>
-            <div style={{ display: 'flex', gap: '0.5rem' }}>
-              <button className="btn btn-secondary btn-sm" onClick={() => { setUseMockData(true); setDbError(null); }}>Use Mock Data</button>
-              <button className="btn btn-secondary btn-sm" onClick={() => window.location.reload()}>Retry</button>
-            </div>
+            <button className="btn btn-secondary btn-sm" onClick={() => window.location.reload()}>Retry</button>
           </div>
         )}
 
@@ -888,16 +761,16 @@ function App() {
               {activeTab === 'users' && 'User & Account Management'}
               {activeTab === 'products' && 'Inventory Products Catalog'}
               {activeTab === 'orders' && 'Order Transactions'}
-              {activeTab === 'service_areas' && 'Service Areas Availability'}
-              {activeTab === 'coupons' && 'Coupon Codes Management'}
+              {activeTab === 'coupons' && 'Coupon Directory'}
+              {activeTab === 'settings' && 'Service Area & Payout Settings'}
             </h1>
             <p>
               {activeTab === 'dashboard' && 'Monitor marketplace stats, verification queues, revenue, and data tools.'}
               {activeTab === 'users' && 'Review buyers, sellers, delivery partners, admin accounts, and verification documents.'}
               {activeTab === 'products' && 'Add new items, manage featured products, and review seller inventory.'}
               {activeTab === 'orders' && 'Update workflow statuses, delivery assignment, payment details, and order flags.'}
-              {activeTab === 'service_areas' && 'Add and manage pin codes and city names to control checkout availability.'}
-              {activeTab === 'coupons' && 'Define coupon offer discount values available for user checkout discount.'}
+              {activeTab === 'coupons' && 'Create, configure, and monitor discount promo coupons.'}
+              {activeTab === 'settings' && 'Control eligible cities, pincodes, and automatic Razorpay payout timing.'}
             </p>
           </div>
         </header>
@@ -911,45 +784,43 @@ function App() {
           <>
             {activeTab === 'dashboard' && (
               <div>
-                {/* 6 Premium Metrics Cards */}
                 <div className="metrics-grid">
                   <Metric title="Total Revenue" value={formatCurrency(totalRevenue)} icon={CheckCircle} />
-                  <Metric title="Total Products" value={products.length} icon={ShoppingBag} />
-                  <Metric title="Total Users" value={buyerCount} icon={UsersIcon} />
-                  <Metric title="Total Sellers" value={`${activeSellersCount}/${sellerCount}`} icon={ShieldCheck} />
-                  <Metric title="Total Delivery Partners" value={partnerCount} icon={Clock} />
-                  <Metric title="Total Orders" value={orders.length} icon={FileText} />
+                  <Metric title="Users" value={users.length} icon={UsersIcon} />
+                  <Metric title="Products" value={products.length} icon={ShoppingBag} />
+                  <Metric title="Orders" value={orders.length} icon={FileText} />
                 </div>
 
                 <div className="mini-metrics-grid">
-                  <Metric title="Pending Sellers" value={pendingSellersCount} icon={AlertTriangle} compact />
-                  <Metric title="Pending Partners" value={pendingPartnersCount} icon={AlertTriangle} compact />
-                  <Metric title="Service Areas" value={areas.length} icon={MapPin} compact />
-                  <Metric title="Offered Coupons" value={coupons.length} icon={Tag} compact />
+                  <Metric title="Buyers" value={buyerCount} icon={UsersIcon} compact />
+                  <Metric title="Sellers" value={`${activeSellersCount}/${sellerCount}`} icon={ShieldCheck} compact />
+                  <Metric title="Delivery Partners" value={partnerCount} icon={Clock} compact />
+                  <Metric title="Pending Reviews" value={pendingSellersCount + pendingPartnersCount} icon={AlertTriangle} compact />
                 </div>
 
-                {/* Database Backup & Seed Tools */}
+                {/*
                 <div className="glass-panel section-card data-tools">
                   <div className="section-header">
-                    <h2><Sparkles size={20} /> Firestore Database Control Center</h2>
+                    <h2><Database size={20} /> Firebase Database Tools</h2>
                   </div>
-                  <p>Seed Firestore database with default sample data catalog, export live data to JSON file, or restore tables from a local JSON backup.</p>
+                  <p>Seed Firestore with app-ready sample data, export a JSON backup, or restore a previous backup.</p>
                   <div className="toolbar-row">
                     <button className="btn btn-primary" onClick={seedFirestoreDatabase} disabled={useMockData}>
-                      <Sparkles size={16} /> Seed Default Catalog
+                      <Sparkles size={16} /> Seed Default Data
                     </button>
                     <button className="btn btn-secondary" onClick={exportDatabaseToJson}>
-                      <FileText size={16} /> Export JSON Data
+                      <Download size={16} /> Export JSON
                     </button>
                     <button className="btn btn-secondary" onClick={() => fileInputRef.current.click()} disabled={useMockData}>
-                      <RefreshCw size={16} /> Import JSON Backup
+                      <Upload size={16} /> Import JSON
                     </button>
                     <input type="file" ref={fileInputRef} onChange={importDatabaseFromJson} accept=".json" hidden />
                   </div>
                 </div>
+                */}
 
                 <div className="dashboard-grid">
-                  <RecentOrders orders={orders} setActiveTab={setActiveTab} formatCurrency={formatCurrency} statusClass={statusClass} />
+                  <RecentOrders orders={orders} setActiveTab={setActiveTab} />
                   <div className="glass-panel section-card">
                     <div className="section-header">
                       <h2>Verification Queue</h2>
@@ -968,7 +839,7 @@ function App() {
                   <div className="toolbar-row">
                     <div className="search-box">
                       <Search size={16} />
-                      <input value={userSearch} onChange={e => setUserSearch(e.target.value)} placeholder="Search accounts..." />
+                      <input value={userSearch} onChange={e => setUserSearch(e.target.value)} placeholder="Search accounts" />
                     </div>
                     <select className="form-control compact-select" value={userRoleFilter} onChange={e => setUserRoleFilter(e.target.value)}>
                       {ROLE_FILTERS.map(role => <option key={role} value={role}>{role === 'All' ? 'All roles' : roleLabel(role)}</option>)}
@@ -986,24 +857,19 @@ function App() {
                           <th>Role</th>
                           <th>Account Details</th>
                           <th>Verification</th>
-                          <th>Manage Actions</th>
+                          <th>Manage</th>
                         </tr>
                       </thead>
                       <tbody>
                         {filteredUsers.map(user => (
                           <React.Fragment key={user.email}>
-                            <tr style={(user.isDisabled || user.disabled) ? { opacity: 0.6 } : {}}>
+                            <tr>
                               <td>
                                 <div className="identity-cell">
                                   <div className="avatar">{(user.name || user.email || 'U').substring(0, 2).toUpperCase()}</div>
                                   <div>
                                     <p>{user.name || 'N/A'}</p>
                                     <span>{user.email}</span>
-                                    {hasEditRequest(user) && (
-                                      <div className="badge-edit-request">
-                                        Edit Request
-                                      </div>
-                                    )}
                                   </div>
                                 </div>
                               </td>
@@ -1016,51 +882,10 @@ function App() {
                               <td><UserStatus user={user} /></td>
                               <td>
                                 <div className="actions-row">
-                                  {/* Verify / Reject explicit buttons for Sellers */}
-                                  {user.role === 'Seller' && (
-                                    <>
-                                      {!user.isSellerVerified && (
-                                        <button className="btn-compact btn-verify" onClick={() => handleVerifySeller(user, true)}>
-                                          <CheckCircle size={13} /> Verify
-                                        </button>
-                                      )}
-                                      {(user.isSellerVerified || !user.isSellerRejected) && (
-                                        <button className="btn-compact btn-reject" onClick={() => handleVerifySeller(user, false)}>
-                                          <UserX size={13} /> Reject
-                                        </button>
-                                      )}
-                                    </>
-                                  )}
-
-                                  {/* Verify / Reject explicit buttons for Delivery Partners */}
-                                  {user.role === 'DeliveryPartner' && (
-                                    <>
-                                      {!user.isDeliveryPartnerVerified && (
-                                        <button className="btn-compact btn-verify" onClick={() => handleVerifyDeliveryPartner(user, true)}>
-                                          <CheckCircle size={13} /> Verify
-                                        </button>
-                                      )}
-                                      {(user.isDeliveryPartnerVerified || !user.isDeliveryPartnerRejected) && (
-                                        <button className="btn-compact btn-reject" onClick={() => handleVerifyDeliveryPartner(user, false)}>
-                                          <UserX size={13} /> Reject
-                                        </button>
-                                      )}
-                                    </>
-                                  )}
-
-                                  {/* Disable toggle button for normal users / buyers (or all non-admins) */}
-                                  {user.role !== 'Admin' && (
-                                    <button 
-                                      className={`btn-compact ${(user.isDisabled || user.disabled) ? 'btn-enable' : 'btn-disable'}`}
-                                      onClick={() => patchUser(user, { isDisabled: !(user.isDisabled || user.disabled) })}
-                                    >
-                                      {(user.isDisabled || user.disabled) ? <CheckCircle size={13} /> : <Ban size={13} />}
-                                      {(user.isDisabled || user.disabled) ? 'Enable' : 'Disable'}
-                                    </button>
-                                  )}
-
-                                  <button className="btn-compact btn-details" onClick={() => setExpandedUserEmail(expandedUserEmail === user.email ? '' : user.email)}>Details</button>
-                                  <button className="btn-compact btn-delete" onClick={() => deleteUser(user.email)} title="Delete Account"><Trash2 size={13} /></button>
+                                  {user.role === 'Seller' && <button className={`btn btn-sm ${user.isSellerVerified ? 'btn-secondary' : 'btn-primary'}`} onClick={() => toggleSellerVerification(user.email, user.isSellerVerified)}>{user.isSellerVerified ? 'Revoke' : 'Approve'}</button>}
+                                  {user.role === 'DeliveryPartner' && <button className={`btn btn-sm ${user.isDeliveryPartnerVerified ? 'btn-secondary' : 'btn-primary'}`} onClick={() => toggleDeliveryVerification(user.email, user.isDeliveryPartnerVerified)}>{user.isDeliveryPartnerVerified ? 'Revoke' : 'Approve'}</button>}
+                                  <button className="btn btn-secondary btn-sm" onClick={() => setExpandedUserEmail(expandedUserEmail === user.email ? '' : user.email)}>Details</button>
+                                  <button className="btn btn-danger btn-sm" onClick={() => deleteUser(user.email)}><Trash2 size={14} /></button>
                                 </div>
                               </td>
                             </tr>
@@ -1068,106 +893,111 @@ function App() {
                               <tr className="detail-row">
                                 <td colSpan="5">
                                   <div className="detail-grid">
-                                    <DetailLine label="Language Preference" value={user.selectedLanguage} />
-                                    <DetailLine label="Plus Club Member" value={user.isPlusMember ? 'Yes' : 'No'} />
-                                    <DetailLine label="App Notifications" value={user.notificationsEnabled ? 'Enabled' : 'Disabled'} />
-                                    
-                                    {user.role === 'Seller' && (
-                                      <>
-                                        <DetailLine label="Shop Name" value={user.shopName} />
-                                        <DetailLine label="Shop Address" value={user.shopAddress} />
-                                        <DetailLine label="Aadhaar ID Card" value={user.sellerAadhaar} />
-                                        <DetailLine label="PAN Card Number" value={user.sellerPanCard} />
-                                        <DetailLine label="GST registration" value={user.sellerGstNumber} />
-                                      </>
-                                    )}
-
-                                    {user.role === 'DeliveryPartner' && (
-                                      <>
-                                        <DetailLine label="Vehicle Classification" value={user.deliveryVehicleType} />
-                                        <DetailLine label="Vehicle Reg Number" value={user.deliveryVehicleNumber} />
-                                        <DetailLine label="Aadhaar ID Card" value={user.deliveryAadhaar} />
-                                        <DetailLine label="Emergency Contact No" value={user.deliveryEmergencyContact} />
-                                      </>
-                                    )}
-
-                                    {(!user.role || user.role === 'User' || user.role === 'Admin') && (
-                                      <>
-                                        <DetailLine label="Delivery Address" value={user.savedAddress} />
-                                        <DetailLine label="Saved Credit/Debit Cards" value={user.savedCards} />
-                                      </>
-                                    )}
-
-                                    {/* Bank Details section shown permanently for sellers & delivery partners */}
-                                    {(user.role === 'Seller' || user.role === 'DeliveryPartner') && (
-                                      <div className="bank-details-card">
-                                        <h4>
-                                          <CheckCircle size={16} /> Bank Account Settlement Details
-                                        </h4>
-                                        <div className="bank-details-grid">
-                                          <p><strong>Holder Name:</strong> {user.bankHolderName || user.name || 'N/A'}</p>
-                                          <p><strong>Bank Name:</strong> {user.bankName || 'N/A'}</p>
-                                          <p><strong>Account Number:</strong> {user.bankAccountNumber || user.sellerBankAccount || user.deliveryBankAccount || 'N/A'}</p>
-                                          <p><strong>IFSC Code:</strong> {user.bankIfscCode || user.sellerIfsc || user.deliveryIfsc || 'N/A'}</p>
-                                        </div>
-                                      </div>
-                                    )}
-
-                                    {/* Profile Edit requests review layout with Approve / Reject flow */}
-                                    {hasEditRequest(user) && (
-                                      <div className="edit-request-box">
-                                        <h4>
-                                          <AlertTriangle size={18} /> Profile Modification Request
-                                        </h4>
-                                        <div className="edit-request-comparison">
-                                          <div>
-                                            <p style={{ fontWeight: 700, marginBottom: '0.4rem', fontSize: '0.85rem', textTransform: 'uppercase', color: 'var(--text-secondary)' }}>Current Profile Details</p>
-                                            <div className="edit-request-panel">
-                                              <p><strong>Name:</strong> {user.name || 'N/A'}</p>
-                                              {user.role === 'Seller' && (
-                                                <>
-                                                  <p><strong>Shop Name:</strong> {user.shopName || 'N/A'}</p>
-                                                  <p><strong>Shop Address:</strong> {user.shopAddress || 'N/A'}</p>
-                                                  <p><strong>Mobile No:</strong> {user.sellerMobile || 'N/A'}</p>
-                                                </>
-                                              )}
-                                              {user.role === 'DeliveryPartner' && (
-                                                <>
-                                                  <p><strong>Mobile No:</strong> {user.deliveryMobile || 'N/A'}</p>
-                                                  <p><strong>Vehicle Classification:</strong> {user.deliveryVehicleType || 'N/A'}</p>
-                                                  <p><strong>Vehicle Number:</strong> {user.deliveryVehicleNumber || 'N/A'}</p>
-                                                </>
-                                              )}
-                                            </div>
-                                          </div>
-                                          <div>
-                                            <p style={{ fontWeight: 700, marginBottom: '0.4rem', fontSize: '0.85rem', textTransform: 'uppercase', color: 'var(--color-warning)' }}>Requested Modifications</p>
-                                            <div className="edit-request-panel requested">
-                                              <p><strong>Name:</strong> <span className={getRequestedValue(user, 'name', user.name) !== user.name ? 'edit-request-diff' : ''}>{getRequestedValue(user, 'name', user.name)}</span></p>
-                                              {user.role === 'Seller' && (
-                                                <>
-                                                  <p><strong>Shop Name:</strong> <span className={getRequestedValue(user, 'shopName', user.shopName) !== user.shopName ? 'edit-request-diff' : ''}>{getRequestedValue(user, 'shopName', user.shopName)}</span></p>
-                                                  <p><strong>Shop Address:</strong> <span className={getRequestedValue(user, 'shopAddress', user.shopAddress) !== user.shopAddress ? 'edit-request-diff' : ''}>{getRequestedValue(user, 'shopAddress', user.shopAddress)}</span></p>
-                                                  <p><strong>Mobile No:</strong> <span className={getRequestedValue(user, 'sellerMobile', user.sellerMobile) !== user.sellerMobile ? 'edit-request-diff' : ''}>{getRequestedValue(user, 'sellerMobile', user.sellerMobile)}</span></p>
-                                                </>
-                                              )}
-                                              {user.role === 'DeliveryPartner' && (
-                                                <>
-                                                  <p><strong>Mobile No:</strong> <span className={getRequestedValue(user, 'deliveryMobile', user.deliveryMobile) !== user.deliveryMobile ? 'edit-request-diff' : ''}>{getRequestedValue(user, 'deliveryMobile', user.deliveryMobile)}</span></p>
-                                                  <p><strong>Vehicle Classification:</strong> <span className={getRequestedValue(user, 'deliveryVehicleType', user.deliveryVehicleType) !== user.deliveryVehicleType ? 'edit-request-diff' : ''}>{getRequestedValue(user, 'deliveryVehicleType', user.deliveryVehicleType)}</span></p>
-                                                  <p><strong>Vehicle Number:</strong> <span className={getRequestedValue(user, 'deliveryVehicleNumber', user.deliveryVehicleNumber) !== user.deliveryVehicleNumber ? 'edit-request-diff' : ''}>{getRequestedValue(user, 'deliveryVehicleNumber', user.deliveryVehicleNumber)}</span></p>
-                                                </>
-                                              )}
-                                            </div>
-                                          </div>
-                                        </div>
-                                        <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end' }}>
-                                          <button className="btn btn-sm btn-primary" style={{ backgroundColor: 'var(--color-primary)' }} onClick={() => handleApproveEditRequest(user)}>Approve Changes</button>
-                                          <button className="btn btn-sm btn-danger" onClick={() => handleRejectEditRequest(user)}>Reject Changes</button>
-                                        </div>
-                                      </div>
-                                    )}
+                                    <DetailLine label="Saved cards" value={user.savedCards} />
+                                    <DetailLine label="Language" value={user.selectedLanguage} />
+                                    <DetailLine label="Plus member" value={user.isPlusMember ? 'Yes' : 'No'} />
+                                    <DetailLine label="Notifications" value={user.notificationsEnabled ? 'Enabled' : 'Disabled'} />
+                                    <DetailLine label="Shop address" value={user.shopAddress} />
+                                    <DetailLine label="Aadhaar" value={user.sellerAadhaar || user.deliveryAadhaar} />
+                                    <DetailLine label="Bank account" value={user.sellerBankAccount || user.deliveryBankAccount} />
+                                    <DetailLine label="PAN" value={user.sellerPanCard} />
+                                    <DetailLine label="GST" value={user.sellerGstNumber} />
+                                    <DetailLine label="Emergency contact" value={user.deliveryEmergencyContact} />
+                                    <DetailLine label="Edit request" value={user.editRequestPending ? 'Pending Approval' : 'None'} />
                                   </div>
+
+                                  {user.sellerVideoUrl && (
+                                    <div style={{ marginTop: '16px' }}>
+                                      <p style={{ margin: '0 0 6px 0', fontSize: '12px', color: '#666', fontWeight: 'bold' }}>Seller Introduction Video:</p>
+                                      <video src={user.sellerVideoUrl} controls width="320" style={{ borderRadius: '8px', border: '1px solid #ddd' }} />
+                                    </div>
+                                  )}
+
+                                  {(user.sellerShopPhoto || user.sellerOwnerPhoto || user.deliveryPhoto) && (
+                                    <div style={{ marginTop: '16px', display: 'flex', gap: '16px', flexWrap: 'wrap' }}>
+                                      {user.sellerShopPhoto && (
+                                        <div>
+                                          <p style={{ margin: '0 0 6px 0', fontSize: '12px', color: '#666', fontWeight: 'bold' }}>Shop Image:</p>
+                                          <img src={user.sellerShopPhoto} alt="Shop" style={{ width: '120px', height: '120px', objectFit: 'cover', borderRadius: '8px', border: '1px solid #ddd' }} />
+                                        </div>
+                                      )}
+                                      {user.sellerOwnerPhoto && (
+                                        <div>
+                                          <p style={{ margin: '0 0 6px 0', fontSize: '12px', color: '#666', fontWeight: 'bold' }}>Owner Selfie/Photo:</p>
+                                          <img src={user.sellerOwnerPhoto} alt="Owner" style={{ width: '120px', height: '120px', objectFit: 'cover', borderRadius: '8px', border: '1px solid #ddd' }} />
+                                        </div>
+                                      )}
+                                      {user.deliveryPhoto && (
+                                        <div>
+                                          <p style={{ margin: '0 0 6px 0', fontSize: '12px', color: '#666', fontWeight: 'bold' }}>Delivery Partner Photo:</p>
+                                          <img src={user.deliveryPhoto} alt="Delivery Partner" style={{ width: '120px', height: '120px', objectFit: 'cover', borderRadius: '8px', border: '1px solid #ddd' }} />
+                                        </div>
+                                      )}
+                                    </div>
+                                  )}
+
+                                  {user.editRequestPending && (
+                                    <div className="edit-request-box" style={{
+                                      marginTop: '16px',
+                                      padding: '16px',
+                                      borderRadius: '12px',
+                                      background: 'rgba(232, 245, 233, 0.4)',
+                                      border: '1px solid #c8e6c9',
+                                      display: 'flex',
+                                      flexDirection: 'column',
+                                      gap: '12px'
+                                    }}>
+                                      <h4 style={{ margin: 0, color: '#2e7d32', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                        ⏳ {user.role === 'Seller' ? 'Seller' : 'Delivery Partner'} Profile Edit Request Pending Approval
+                                      </h4>
+                                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+                                        <div>
+                                          <p style={{ margin: '0 0 4px 0', fontSize: '12px', color: '#666', fontWeight: 'bold' }}>Current Profile Info:</p>
+                                          {user.role === 'Seller' ? (
+                                            <div style={{ fontSize: '13px' }}>
+                                              <div><strong>Owner Name:</strong> {user.name}</div>
+                                              <div><strong>Shop Name:</strong> {user.shopName}</div>
+                                              <div><strong>Shop Address:</strong> {user.shopAddress}</div>
+                                            </div>
+                                          ) : (
+                                            <div style={{ fontSize: '13px' }}>
+                                              <div><strong>Full Name:</strong> {user.name}</div>
+                                              <div><strong>Mobile:</strong> {user.deliveryMobile}</div>
+                                              <div><strong>Vehicle:</strong> {user.deliveryVehicleType} ({user.deliveryVehicleNumber})</div>
+                                              <div><strong>Emergency Contact:</strong> {user.deliveryEmergencyContact}</div>
+                                              <div><strong>Address:</strong> {user.deliveryAddress}</div>
+                                            </div>
+                                          )}
+                                        </div>
+                                        <div>
+                                          <p style={{ margin: '0 0 4px 0', fontSize: '12px', color: '#2e7d32', fontWeight: 'bold' }}>Requested Profile Updates:</p>
+                                          {user.role === 'Seller' ? (
+                                            <div style={{ fontSize: '13px', color: '#1b5e20' }}>
+                                              <div><strong>Owner Name:</strong> {user.requestedName || <span style={{ color: '#999', fontStyle: 'italic' }}>No change</span>}</div>
+                                              <div><strong>Shop Name:</strong> {user.requestedShopName || <span style={{ color: '#999', fontStyle: 'italic' }}>No change</span>}</div>
+                                              <div><strong>Shop Address:</strong> {user.requestedShopAddress || <span style={{ color: '#999', fontStyle: 'italic' }}>No change</span>}</div>
+                                            </div>
+                                          ) : (
+                                            <div style={{ fontSize: '13px', color: '#1b5e20' }}>
+                                              <div><strong>Full Name:</strong> {user.requestedName || <span style={{ color: '#999', fontStyle: 'italic' }}>No change</span>}</div>
+                                              <div><strong>Mobile:</strong> {user.requestedDeliveryMobile || <span style={{ color: '#999', fontStyle: 'italic' }}>No change</span>}</div>
+                                              <div><strong>Vehicle:</strong> {user.requestedDeliveryVehicleType ? `${user.requestedDeliveryVehicleType} (${user.requestedDeliveryVehicleNumber || 'N/A'})` : <span style={{ color: '#999', fontStyle: 'italic' }}>No change</span>}</div>
+                                              <div><strong>Emergency Contact:</strong> {user.requestedDeliveryEmergencyContact || <span style={{ color: '#999', fontStyle: 'italic' }}>No change</span>}</div>
+                                              <div><strong>Address:</strong> {user.requestedDeliveryAddress || <span style={{ color: '#999', fontStyle: 'italic' }}>No change</span>}</div>
+                                            </div>
+                                          )}
+                                        </div>
+                                      </div>
+                                      <div style={{ display: 'flex', gap: '8px', marginTop: '4px' }}>
+                                        <button className="btn btn-primary btn-sm" onClick={() => approveProfileEditRequest(user.email, user)}>
+                                          Approve Profile Changes
+                                        </button>
+                                        <button className="btn btn-secondary btn-sm" onClick={() => rejectProfileEditRequest(user.email)}>
+                                          Decline Profile Changes
+                                        </button>
+                                      </div>
+                                    </div>
+                                  )}
                                 </td>
                               </tr>
                             )}
@@ -1196,7 +1026,7 @@ function App() {
                   <div className="toolbar-row">
                     <div className="search-box">
                       <Search size={16} />
-                      <input value={orderSearch} onChange={e => setOrderSearch(e.target.value)} placeholder="Search orders..." />
+                      <input value={orderSearch} onChange={e => setOrderSearch(e.target.value)} placeholder="Search orders" />
                     </div>
                     <select className="form-control compact-select" value={orderStatusFilter} onChange={e => setOrderStatusFilter(e.target.value)}>
                       <option value="All">All statuses</option>
@@ -1212,12 +1042,10 @@ function App() {
                     <table className="modern-table">
                       <thead>
                         <tr>
-                          <th>Order ID</th>
+                          <th>Order</th>
                           <th>Customer</th>
-                          <th>Product Name / Items</th>
-                          <th>Seller Name</th>
-                          <th>Delivery Partner</th>
-                          <th>Amount & Method</th>
+                          <th>Items</th>
+                          <th>Payment</th>
                           <th>Status</th>
                           <th>Actions</th>
                         </tr>
@@ -1231,20 +1059,12 @@ function App() {
                                 <span className="table-subtext">{new Date(Number(order.orderDate || 0)).toLocaleString()}</span>
                               </td>
                               <td>
-                                <p>{getOrderCustomerName(order)}</p>
-                                <span className="table-subtext">{order.email}</span>
+                                <p>{order.email}</p>
+                                <span className="table-subtext clamp">{order.deliveryAddress || 'No delivery address'}</span>
                               </td>
                               <td>
-                                <p className="clamp" title={order.itemsSummary}>{order.itemsSummary}</p>
-                                {order.couponApplied && <span className="status-badge verified" style={{ fontSize: '0.65rem', marginTop: '0.2rem', display: 'inline-flex' }}>Coupon: {order.couponApplied}</span>}
-                              </td>
-                              <td>
-                                <p>{getOrderSeller(order)}</p>
-                              </td>
-                              <td>
-                                <p style={{ color: order.deliveryPartnerEmail ? 'var(--color-accent)' : 'var(--text-secondary)', fontWeight: order.deliveryPartnerEmail ? '700' : 'normal' }}>
-                                  {getOrderDeliveryPartner(order)}
-                                </p>
+                                <p className="clamp">{order.itemsSummary}</p>
+                                {order.couponApplied && <span className="status-badge verified">{order.couponApplied}</span>}
                               </td>
                               <td>
                                 <p>{formatCurrency(order.totalAmount)}</p>
@@ -1255,7 +1075,7 @@ function App() {
                               </td>
                               <td>
                                 <div className="actions-row">
-                                  <select className="form-control compact-select" style={{ minWidth: '130px' }} value={order.status || 'Pending'} onChange={e => updateOrder(order.orderId, { status: e.target.value })}>
+                                  <select className="form-control compact-select" value={order.status || 'Pending'} onChange={e => updateOrder(order.orderId, { status: e.target.value })}>
                                     {ORDER_STATUSES.map(status => <option key={status} value={status}>{status}</option>)}
                                   </select>
                                   <button className="btn btn-secondary btn-sm" onClick={() => setExpandedOrderId(expandedOrderId === order.orderId ? '' : order.orderId)}>Details</button>
@@ -1264,18 +1084,14 @@ function App() {
                             </tr>
                             {expandedOrderId === order.orderId && (
                               <tr className="detail-row">
-                                <td colSpan="8">
+                                <td colSpan="6">
                                   <div className="detail-grid">
-                                    <DetailLine label="Customer Profile Name" value={getOrderCustomerName(order)} />
-                                    <DetailLine label="Customer Account Email" value={order.email} />
-                                    <DetailLine label="Products items" value={order.itemsSummary} />
-                                    <DetailLine label="Assigned Seller Shop" value={getOrderSeller(order)} />
-                                    <DetailLine label="Accepting Delivery Rider" value={getOrderDeliveryPartner(order)} />
-                                    <DetailLine label="Delivery Dispatch Status" value={order.deliveryStatus || 'Not started'} />
-                                    <DetailLine label="Seller Confirmed Checkout" value={order.sellerConfirmed ? 'Yes' : 'No'} />
-                                    <DetailLine label="Seller Rejected Order" value={order.sellerRejectRequested ? 'Yes' : 'No'} />
-                                    <DetailLine label="Delivery Assignment Request" value={order.sellerChangeDeliveryBoyRequested ? 'Yes' : 'No'} />
-                                    <DetailLine label="Full Dispatch Destination" value={order.deliveryAddress} />
+                                    <DetailLine label="Delivery partner" value={order.deliveryPartnerEmail || 'Not assigned'} />
+                                    <DetailLine label="Delivery status" value={order.deliveryStatus || 'Not started'} />
+                                    <DetailLine label="Seller confirmed" value={order.sellerConfirmed ? 'Yes' : 'No'} />
+                                    <DetailLine label="Seller reject requested" value={order.sellerRejectRequested ? 'Yes' : 'No'} />
+                                    <DetailLine label="Change delivery partner requested" value={order.sellerChangeDeliveryBoyRequested ? 'Yes' : 'No'} />
+                                    <DetailLine label="Full address" value={order.deliveryAddress} />
                                   </div>
                                   <div className="toolbar-row detail-actions">
                                     <button className="btn btn-secondary btn-sm" onClick={() => updateOrder(order.orderId, { status: 'Shipped', deliveryStatus: 'On the Way' })}>Ship</button>
@@ -1294,62 +1110,65 @@ function App() {
               </div>
             )}
 
-            {/* Service Areas Tab View (Feature 5) */}
-            {activeTab === 'service_areas' && (
+            {activeTab === 'coupons' && (
               <div className="glass-panel section-card">
                 <div className="section-header stacked-section-header">
-                  <h2>Service Areas Availability</h2>
-                </div>
-                
-                <form onSubmit={handleAddArea} className="form-grid" style={{ marginBottom: '2.5rem', padding: '1.25rem', border: '1px solid var(--border-glass)', borderRadius: 'var(--radius-md)', background: 'rgba(255,255,255,0.01)' }}>
-                  <h3 style={{ gridColumn: 'span 2', fontSize: '1.1rem', color: 'var(--color-accent)', marginBottom: '0.5rem' }}>Add New Serviced Area</h3>
-                  <div className="form-group">
-                    <label className="form-label">City Name</label>
-                    <input type="text" className="form-control" value={newCityName} onChange={e => setNewCityName(e.target.value)} placeholder="e.g. Eco City" required />
-                  </div>
-                  <div className="form-group">
-                    <label className="form-label">Pin Code</label>
-                    <input type="text" className="form-control" value={newPinCode} onChange={e => setNewPinCode(e.target.value)} placeholder="e.g. 54002" required />
-                  </div>
-                  <div className="form-actions" style={{ gridColumn: 'span 2', marginTop: '0.5rem', paddingTop: '0.75rem' }}>
-                    <button type="submit" className="btn btn-primary">
-                      <Plus size={16} /> Add Area
+                  <h2>Coupon Directory</h2>
+                  <div className="toolbar-row">
+                    <button className="btn btn-primary" onClick={() => setShowCouponModal(true)}>
+                      <Plus size={16} /> Create Coupon
                     </button>
                   </div>
-                </form>
-
-                <div className="section-header stacked-section-header">
-                  <h3>Active Service Areas</h3>
-                  <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginTop: '0.25rem' }}>
-                    Only added pincodes will show as available for delivery checks. All other locations will show as "Delivery Not Available".
-                  </p>
                 </div>
 
-                {areas.length === 0 ? (
-                  <Empty icon={MapPin} title="No Service Areas Added" text="Add active delivery pin codes above to enable checkout eligibility checks." />
+                {coupons.length === 0 ? (
+                  <Empty icon={Ticket} title="No Coupons Found" text="Create coupons to offer discounts on checkout." />
                 ) : (
                   <div className="table-container">
                     <table className="modern-table">
                       <thead>
                         <tr>
-                          <th>City Name</th>
-                          <th>Pin Code</th>
-                          <th>Coverage Status</th>
-                          <th>Manage</th>
+                          <th>Code</th>
+                          <th>Discount</th>
+                          <th>Min Order</th>
+                          <th>Max Discount</th>
+                          <th>Description</th>
+                          <th>Status</th>
+                          <th>Actions</th>
                         </tr>
                       </thead>
                       <tbody>
-                        {areas.map(area => (
-                          <tr key={area.id}>
-                            <td><strong>{area.city}</strong></td>
-                            <td className="accent-text" style={{ fontSize: '1.05rem', fontWeight: '800' }}>{area.pinCode}</td>
+                        {coupons.map(coupon => (
+                          <tr key={coupon.code}>
                             <td>
-                              <span className="status-badge verified">Serviced</span>
+                              <p className="accent-text" style={{ fontWeight: 'bold' }}>{coupon.code}</p>
                             </td>
                             <td>
-                              <button className="btn btn-danger btn-sm" onClick={() => handleDeleteArea(area.id)}>
-                                <Trash2 size={14} /> Remove Area
-                              </button>
+                              <p>{coupon.discountPercent}% OFF</p>
+                            </td>
+                            <td>
+                              <p>₹{coupon.minOrderAmount || 0}</p>
+                            </td>
+                            <td>
+                              <p>{coupon.maxDiscount && coupon.maxDiscount < 999999 ? `₹${coupon.maxDiscount}` : 'Unlimited'}</p>
+                            </td>
+                            <td className="muted-cell">
+                              <p>{coupon.description || 'No description provided'}</p>
+                            </td>
+                            <td>
+                              <span className={`status-badge ${coupon.isActive ? 'verified' : 'rejected'}`}>
+                                {coupon.isActive ? 'Active' : 'Inactive'}
+                              </span>
+                            </td>
+                            <td>
+                              <div className="actions-row">
+                                <button className={`btn btn-sm ${coupon.isActive ? 'btn-secondary' : 'btn-primary'}`} onClick={() => toggleCouponActive(coupon.code, coupon.isActive)}>
+                                  {coupon.isActive ? 'Deactivate' : 'Activate'}
+                                </button>
+                                <button className="btn btn-danger btn-sm" onClick={() => deleteCoupon(coupon.code)}>
+                                  <Trash2 size={14} />
+                                </button>
+                              </div>
                             </td>
                           </tr>
                         ))}
@@ -1360,66 +1179,24 @@ function App() {
               </div>
             )}
 
-            {/* Coupons Tab View (Feature 8) */}
-            {activeTab === 'coupons' && (
+            {activeTab === 'settings' && (
               <div className="glass-panel section-card">
-                <div className="section-header stacked-section-header">
-                  <h2>Discount Coupons Offered</h2>
-                </div>
-
-                <form onSubmit={handleAddCoupon} className="form-grid" style={{ marginBottom: '2.5rem', padding: '1.25rem', border: '1px solid var(--border-glass)', borderRadius: 'var(--radius-md)', background: 'rgba(255,255,255,0.01)' }}>
-                  <h3 style={{ gridColumn: 'span 2', fontSize: '1.1rem', color: 'var(--color-accent)', marginBottom: '0.5rem' }}>Create Offered Coupon</h3>
-                  <div className="form-group">
-                    <label className="form-label">Coupon Code (Uppercase)</label>
-                    <input type="text" className="form-control" value={newCouponCode} onChange={e => setNewCouponCode(e.target.value)} placeholder="e.g. BAZAAR50" required />
+                <div className="section-header"><h2>Fulfilment Configuration</h2></div>
+                <form className="form-grid" onSubmit={saveServiceConfig}>
+                  <div className="form-group full-width">
+                    <label className="form-label">Service Cities (comma-separated)</label>
+                    <input className="form-control" value={serviceCitiesText} onChange={e => setServiceCitiesText(e.target.value)} placeholder="Delhi, Noida" />
+                  </div>
+                  <div className="form-group full-width">
+                    <label className="form-label">Service Pincodes (comma-separated)</label>
+                    <input className="form-control" value={servicePincodesText} onChange={e => setServicePincodesText(e.target.value)} placeholder="110001, 201301" />
                   </div>
                   <div className="form-group">
-                    <label className="form-label">Discount Amount Offered (₹)</label>
-                    <input type="number" className="form-control" value={newCouponAmount} onChange={e => setNewCouponAmount(e.target.value)} placeholder="e.g. 50" required />
+                    <label className="form-label">Automatic payout delay (hours)</label>
+                    <input type="number" min="0" className="form-control" value={payoutDelayHours} onChange={e => setPayoutDelayHours(e.target.value)} required />
                   </div>
-                  <div className="form-actions" style={{ gridColumn: 'span 2', marginTop: '0.5rem', paddingTop: '0.75rem' }}>
-                    <button type="submit" className="btn btn-primary">
-                      <Plus size={16} /> Create Coupon
-                    </button>
-                  </div>
+                  <div className="form-actions"><button className="btn btn-primary" type="submit">Save Settings</button></div>
                 </form>
-
-                <div className="section-header stacked-section-header">
-                  <h3>Active Coupon Codes</h3>
-                </div>
-
-                {coupons.length === 0 ? (
-                  <Empty icon={Tag} title="No Active Coupons" text="Create coupon discount codes above to allow user savings at checkout." />
-                ) : (
-                  <div className="table-container">
-                    <table className="modern-table">
-                      <thead>
-                        <tr>
-                          <th>Coupon Code</th>
-                          <th>Offered Amount</th>
-                          <th>Status</th>
-                          <th>Manage</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {coupons.map(coupon => (
-                          <tr key={coupon.id || coupon.code}>
-                            <td className="accent-text" style={{ fontSize: '1.1rem', fontWeight: '900' }}>{coupon.code}</td>
-                            <td><strong>{formatCurrency(coupon.amount)} Off</strong></td>
-                            <td>
-                              <span className="status-badge verified">Active</span>
-                            </td>
-                            <td>
-                              <button className="btn btn-danger btn-sm" onClick={() => handleDeleteCoupon(coupon.id || coupon.code)}>
-                                <Trash2 size={14} /> Delete Coupon
-                              </button>
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
               </div>
             )}
           </>
@@ -1468,6 +1245,45 @@ function App() {
           </div>
         </div>
       )}
+
+      {showCouponModal && (
+        <div className="modal-overlay">
+          <div className="glass-panel modal-content">
+            <button className="close-btn" onClick={() => setShowCouponModal(false)}>x</button>
+            <h2 className="modal-title"><Plus size={22} color="var(--color-accent)" /> Create New Coupon</h2>
+            <form onSubmit={handleCreateCoupon} className="form-grid">
+              <div className="form-group">
+                <label className="form-label">Coupon Code</label>
+                <input type="text" className="form-control" value={newCouponCode} onChange={e => setNewCouponCode(e.target.value)} placeholder="e.g. BAZAAR50" required />
+              </div>
+              <div className="form-group">
+                <label className="form-label">Discount Percent (1-100)</label>
+                <input type="number" min="1" max="100" className="form-control" value={newCouponDiscount} onChange={e => setNewCouponDiscount(e.target.value)} required />
+              </div>
+              <div className="form-group">
+                <label className="form-label">Min Order Amount (₹)</label>
+                <input type="number" min="0" step="0.01" className="form-control" value={newCouponMinOrder} onChange={e => setNewCouponMinOrder(e.target.value)} placeholder="0" />
+              </div>
+              <div className="form-group">
+                <label className="form-label">Max Discount Amount (₹)</label>
+                <input type="number" min="0" step="0.01" className="form-control" value={newCouponMaxDiscount} onChange={e => setNewCouponMaxDiscount(e.target.value)} placeholder="Unlimited" />
+              </div>
+              <div className="form-group full-width">
+                <label className="form-label">Description</label>
+                <input type="text" className="form-control" value={newCouponDesc} onChange={e => setNewCouponDesc(e.target.value)} placeholder="Description of the coupon" />
+              </div>
+              <div className="form-group full-width checkbox-row">
+                <input type="checkbox" id="coupon-active-check" checked={newCouponActive} onChange={e => setNewCouponActive(e.target.checked)} />
+                <label htmlFor="coupon-active-check">Mark as Active instantly</label>
+              </div>
+              <div className="form-actions">
+                <button type="button" className="btn btn-secondary" onClick={() => setShowCouponModal(false)}>Cancel</button>
+                <button type="submit" className="btn btn-primary">Create Coupon</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -1508,7 +1324,7 @@ function QueueLine({ label, value, onClick }) {
   );
 }
 
-function RecentOrders({ orders, setActiveTab, formatCurrency, statusClass }) {
+function RecentOrders({ orders, setActiveTab }) {
   return (
     <div className="glass-panel section-card">
       <div className="section-header">
@@ -1546,26 +1362,11 @@ function RecentOrders({ orders, setActiveTab, formatCurrency, statusClass }) {
 }
 
 function UserStatus({ user }) {
-  if (user.isDisabled || user.disabled) {
-    return <span className="status-badge cancelled">Disabled</span>;
-  }
   if (user.role === 'Seller') {
-    if (user.isSellerVerified) {
-      return <span className="status-badge verified">Verified Seller</span>;
-    }
-    if (user.isSellerRejected) {
-      return <span className="status-badge cancelled">Rejected Seller</span>;
-    }
-    return <span className="status-badge pending">Seller Review</span>;
+    return <span className={`status-badge ${user.isSellerVerified ? 'verified' : 'pending'}`}>{user.isSellerVerified ? 'Verified Seller' : 'Seller Review'}</span>;
   }
   if (user.role === 'DeliveryPartner') {
-    if (user.isDeliveryPartnerVerified) {
-      return <span className="status-badge verified">Verified Partner</span>;
-    }
-    if (user.isDeliveryPartnerRejected) {
-      return <span className="status-badge cancelled">Rejected Partner</span>;
-    }
-    return <span className="status-badge pending">Partner Review</span>;
+    return <span className={`status-badge ${user.isDeliveryPartnerVerified ? 'verified' : 'pending'}`}>{user.isDeliveryPartnerVerified ? 'Verified Partner' : 'Partner Review'}</span>;
   }
   return <span className="status-badge verified">Active Account</span>;
 }
@@ -1615,7 +1416,7 @@ function ProductsTab({ products, setShowProductModal, toggleProductFeatured, del
                     </button>
                   </td>
                   <td className="table-subtext">{product.sellerEmail || 'System Store'}</td>
-                  <td><button className="btn-compact btn-delete" onClick={() => deleteProduct(product.id)} title="Delete Product"><Trash2 size={14} /></button></td>
+                  <td><button className="btn btn-danger btn-sm" onClick={() => deleteProduct(product.id)}><Trash2 size={14} /></button></td>
                 </tr>
               ))}
             </tbody>
