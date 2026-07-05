@@ -15,7 +15,9 @@ import {
   Sparkles,
   Star,
   Trash2,
-  Users as UsersIcon
+  Users as UsersIcon,
+  Settings,
+  Ticket
 } from 'lucide-react';
 import {
   collection,
@@ -51,6 +53,7 @@ const defaultUsers = [
   { email: 'rider@bazaar.com', name: 'Fast Courier Rider', role: 'DeliveryPartner', isDeliveryPartnerVerified: true, deliveryMobile: '+91 9999911111', deliveryVehicleType: 'Electric Scooter', deliveryVehicleNumber: 'DL-3C-EC-9999', deliveryEmergencyContact: '+91 9999922222' },
   { email: 'pending.rider@bazaar.com', name: 'New Delivery Partner', role: 'DeliveryPartner', isDeliveryPartnerVerified: false, deliveryMobile: '+91 9999933333', deliveryVehicleType: 'Bike', deliveryVehicleNumber: 'DL-4S-NP-2211' }
 ];
+
 
 const defaultOrders = [
   { orderId: 'ORD-9872', email: 'buyer@bazaar.com', orderDate: Date.now() - 3600000 * 2, totalAmount: 134.98, status: 'Processing', itemsSummary: '1x ZYL Sound Pro Wireless ANC, 1x Organic Apples', paymentMode: 'Card ending in 4242', deliveryAddress: '22 Market Street, Eco City', couponApplied: 'GREEN10', deliveryPartnerEmail: '', deliveryStatus: '', sellerConfirmed: false },
@@ -112,6 +115,16 @@ function App() {
   const [newProductSeller, setNewProductSeller] = useState('admin@bazaar.com');
   const [newProductFeatured, setNewProductFeatured] = useState(false);
 
+  // Coupon management states
+  const [coupons, setCoupons] = useState([]);
+  const [showCouponModal, setShowCouponModal] = useState(false);
+  const [newCouponCode, setNewCouponCode] = useState('');
+  const [newCouponDiscount, setNewCouponDiscount] = useState('');
+  const [newCouponMinOrder, setNewCouponMinOrder] = useState('');
+  const [newCouponMaxDiscount, setNewCouponMaxDiscount] = useState('');
+  const [newCouponDesc, setNewCouponDesc] = useState('');
+  const [newCouponActive, setNewCouponActive] = useState(true);
+
   useEffect(() => {
     const savedSession = window.localStorage.getItem('bazaarAdminSession');
     if (savedSession) {
@@ -133,6 +146,7 @@ function App() {
       setUsers([]);
       setProducts([]);
       setOrders([]);
+      setCoupons([]);
       setLoading(false);
       return undefined;
     }
@@ -141,6 +155,7 @@ function App() {
       setUsers(defaultUsers);
       setProducts(defaultProducts);
       setOrders(defaultOrders);
+      setCoupons([]);
       setLoading(false);
       return undefined;
     }
@@ -148,6 +163,8 @@ function App() {
     let unsubscribeUsers = () => { };
     let unsubscribeProducts = () => { };
     let unsubscribeOrders = () => { };
+    let unsubscribeConfig = () => { };
+    let unsubscribeCoupons = () => { };
 
     try {
       setLoading(true);
@@ -190,8 +207,27 @@ function App() {
           setLoading(false);
         }
       );
+
+      unsubscribeCoupons = onSnapshot(
+        collection(db, 'coupons'),
+        snapshot => {
+          const list = snapshot.docs.map(couponDoc => ({ ...couponDoc.data(), code: couponDoc.data().code || couponDoc.id }));
+          setCoupons(list);
+        },
+        err => {
+          console.warn('Firestore coupons sync failed:', err);
+        }
+      );
+
+      unsubscribeConfig = onSnapshot(doc(db, 'app_config', 'main'), configDoc => {
+        const config = configDoc.exists() ? configDoc.data() : {};
+        setAppConfig(config);
+        setServiceCitiesText((config.serviceCities || []).join(', '));
+        setServicePincodesText((config.servicePincodes || []).join(', '));
+        setPayoutDelayHours(String(config.payoutDelayHours ?? 24));
+      });
     } catch (error) {
-      console.error('Firebase init failed, switching to mock:', error);
+      console.warn('Firebase snapshot initialization error:', error);
       setDbError('Invalid Firebase configuration.');
       setLoading(false);
     }
@@ -200,6 +236,8 @@ function App() {
       unsubscribeUsers();
       unsubscribeProducts();
       unsubscribeOrders();
+      unsubscribeConfig();
+      unsubscribeCoupons();
     };
   }, [authUser, useMockData]);
 
@@ -366,6 +404,58 @@ function App() {
     }
   };
 
+  const approveProfileEditRequest = async (email, user) => {
+    const payload = {
+      name: user.requestedName || user.name,
+      shopName: user.requestedShopName || user.shopName,
+      shopAddress: user.requestedShopAddress || user.shopAddress,
+      shopAddressLat: user.requestedShopAddress ? user.requestedShopAddressLat : user.shopAddressLat || 0,
+      shopAddressLng: user.requestedShopAddress ? user.requestedShopAddressLng : user.shopAddressLng || 0,
+      
+      deliveryMobile: user.requestedDeliveryMobile || user.deliveryMobile || "",
+      deliveryVehicleType: user.requestedDeliveryVehicleType || user.deliveryVehicleType || "",
+      deliveryVehicleNumber: user.requestedDeliveryVehicleNumber || user.deliveryVehicleNumber || "",
+      deliveryEmergencyContact: user.requestedDeliveryEmergencyContact || user.deliveryEmergencyContact || "",
+      deliveryAddress: user.requestedDeliveryAddress || user.deliveryAddress || "",
+      deliveryAddressLat: user.requestedDeliveryAddress ? user.requestedDeliveryAddressLat : user.deliveryAddressLat || 0,
+      deliveryAddressLng: user.requestedDeliveryAddress ? user.requestedDeliveryAddressLng : user.deliveryAddressLng || 0,
+
+      editRequestPending: false,
+      requestedName: "",
+      requestedShopName: "",
+      requestedShopAddress: "",
+      requestedShopAddressLat: 0,
+      requestedShopAddressLng: 0,
+      requestedDeliveryMobile: "",
+      requestedDeliveryVehicleType: "",
+      requestedDeliveryVehicleNumber: "",
+      requestedDeliveryEmergencyContact: "",
+      requestedDeliveryAddress: "",
+      requestedDeliveryAddressLat: 0,
+      requestedDeliveryAddressLng: 0
+    };
+    await patchUser(email, payload);
+  };
+
+  const rejectProfileEditRequest = async (email) => {
+    const payload = {
+      editRequestPending: false,
+      requestedName: "",
+      requestedShopName: "",
+      requestedShopAddress: "",
+      requestedShopAddressLat: 0,
+      requestedShopAddressLng: 0,
+      requestedDeliveryMobile: "",
+      requestedDeliveryVehicleType: "",
+      requestedDeliveryVehicleNumber: "",
+      requestedDeliveryEmergencyContact: "",
+      requestedDeliveryAddress: "",
+      requestedDeliveryAddressLat: 0,
+      requestedDeliveryAddressLng: 0
+    };
+    await patchUser(email, payload);
+  };
+
   const toggleSellerVerification = (email, currentStatus) => patchUser(email, {
     isSellerVerified: !currentStatus,
     isSellerVerificationPending: false
@@ -475,6 +565,78 @@ function App() {
     }
   };
 
+  const toggleCouponActive = async (code, currentStatus) => {
+    if (useMockData) {
+      setCoupons(coupons.map(c => (c.code === code ? { ...c, isActive: !currentStatus } : c)));
+      return;
+    }
+    try {
+      await updateDoc(doc(db, 'coupons', code), { isActive: !currentStatus });
+    } catch (e) {
+      alert(`Error updating coupon: ${e.message}`);
+    }
+  };
+
+  const deleteCoupon = async code => {
+    if (!window.confirm(`Are you sure you want to delete coupon ${code}?`)) return;
+    if (useMockData) {
+      setCoupons(coupons.filter(c => c.code !== code));
+      return;
+    }
+    try {
+      await deleteDoc(doc(db, 'coupons', code));
+    } catch (e) {
+      alert(`Error deleting coupon: ${e.message}`);
+    }
+  };
+
+  const handleCreateCoupon = async e => {
+    e.preventDefault();
+    const discountPercent = parseInt(newCouponDiscount, 10);
+    const minOrderAmount = parseFloat(newCouponMinOrder || 0);
+    const maxDiscount = parseFloat(newCouponMaxDiscount || 999999);
+    
+    if (!newCouponCode.trim() || Number.isNaN(discountPercent) || discountPercent <= 0 || discountPercent > 100) {
+      alert('Please fill in a valid code and discount percent (1-100).');
+      return;
+    }
+
+    const codeUpper = newCouponCode.trim().toUpperCase();
+
+    const newCoup = {
+      code: codeUpper,
+      discountPercent,
+      description: newCouponDesc,
+      isActive: newCouponActive,
+      minOrderAmount,
+      maxDiscount
+    };
+
+    if (useMockData) {
+      setCoupons([...coupons, newCoup]);
+      setShowCouponModal(false);
+      resetCouponForm();
+      return;
+    }
+
+    try {
+      await setDoc(doc(db, 'coupons', codeUpper), newCoup);
+      setShowCouponModal(false);
+      resetCouponForm();
+    } catch (e) {
+      alert(`Error creating coupon: ${e.message}`);
+    }
+  };
+
+  const resetCouponForm = () => {
+    setNewCouponCode('');
+    setNewCouponDiscount('');
+    setNewCouponMinOrder('');
+    setNewCouponMaxDiscount('');
+    setNewCouponDesc('');
+    setNewCouponActive(true);
+  };
+
   if (authLoading) {
     return (
       <div className="auth-screen">
@@ -538,7 +700,9 @@ function App() {
             ['dashboard', LayoutDashboard, 'Dashboard'],
             ['users', UsersIcon, 'Users'],
             ['products', ShoppingBag, 'Products'],
-            ['orders', FileText, 'Orders']
+            ['orders', FileText, 'Orders'],
+            ['coupons', Ticket, 'Coupons'],
+            ['settings', Settings, 'Service Settings']
           ].map(([tab, Icon, label]) => (
             <button key={tab} className={`nav-item ${activeTab === tab ? 'active' : ''}`} onClick={() => setActiveTab(tab)}>
               <Icon size={20} />
@@ -597,12 +761,16 @@ function App() {
               {activeTab === 'users' && 'User & Account Management'}
               {activeTab === 'products' && 'Inventory Products Catalog'}
               {activeTab === 'orders' && 'Order Transactions'}
+              {activeTab === 'coupons' && 'Coupon Directory'}
+              {activeTab === 'settings' && 'Service Area & Payout Settings'}
             </h1>
             <p>
               {activeTab === 'dashboard' && 'Monitor marketplace stats, verification queues, revenue, and data tools.'}
               {activeTab === 'users' && 'Review buyers, sellers, delivery partners, admin accounts, and verification documents.'}
               {activeTab === 'products' && 'Add new items, manage featured products, and review seller inventory.'}
               {activeTab === 'orders' && 'Update workflow statuses, delivery assignment, payment details, and order flags.'}
+              {activeTab === 'coupons' && 'Create, configure, and monitor discount promo coupons.'}
+              {activeTab === 'settings' && 'Control eligible cities, pincodes, and automatic Razorpay payout timing.'}
             </p>
           </div>
         </header>
@@ -735,9 +903,101 @@ function App() {
                                     <DetailLine label="PAN" value={user.sellerPanCard} />
                                     <DetailLine label="GST" value={user.sellerGstNumber} />
                                     <DetailLine label="Emergency contact" value={user.deliveryEmergencyContact} />
-                                    <DetailLine label="Edit request" value={user.editRequestPending ? 'Pending' : ''} />
-                                    <DetailLine label="Requested name" value={user.requestedName} />
+                                    <DetailLine label="Edit request" value={user.editRequestPending ? 'Pending Approval' : 'None'} />
                                   </div>
+
+                                  {user.sellerVideoUrl && (
+                                    <div style={{ marginTop: '16px' }}>
+                                      <p style={{ margin: '0 0 6px 0', fontSize: '12px', color: '#666', fontWeight: 'bold' }}>Seller Introduction Video:</p>
+                                      <video src={user.sellerVideoUrl} controls width="320" style={{ borderRadius: '8px', border: '1px solid #ddd' }} />
+                                    </div>
+                                  )}
+
+                                  {(user.sellerShopPhoto || user.sellerOwnerPhoto || user.deliveryPhoto) && (
+                                    <div style={{ marginTop: '16px', display: 'flex', gap: '16px', flexWrap: 'wrap' }}>
+                                      {user.sellerShopPhoto && (
+                                        <div>
+                                          <p style={{ margin: '0 0 6px 0', fontSize: '12px', color: '#666', fontWeight: 'bold' }}>Shop Image:</p>
+                                          <img src={user.sellerShopPhoto} alt="Shop" style={{ width: '120px', height: '120px', objectFit: 'cover', borderRadius: '8px', border: '1px solid #ddd' }} />
+                                        </div>
+                                      )}
+                                      {user.sellerOwnerPhoto && (
+                                        <div>
+                                          <p style={{ margin: '0 0 6px 0', fontSize: '12px', color: '#666', fontWeight: 'bold' }}>Owner Selfie/Photo:</p>
+                                          <img src={user.sellerOwnerPhoto} alt="Owner" style={{ width: '120px', height: '120px', objectFit: 'cover', borderRadius: '8px', border: '1px solid #ddd' }} />
+                                        </div>
+                                      )}
+                                      {user.deliveryPhoto && (
+                                        <div>
+                                          <p style={{ margin: '0 0 6px 0', fontSize: '12px', color: '#666', fontWeight: 'bold' }}>Delivery Partner Photo:</p>
+                                          <img src={user.deliveryPhoto} alt="Delivery Partner" style={{ width: '120px', height: '120px', objectFit: 'cover', borderRadius: '8px', border: '1px solid #ddd' }} />
+                                        </div>
+                                      )}
+                                    </div>
+                                  )}
+
+                                  {user.editRequestPending && (
+                                    <div className="edit-request-box" style={{
+                                      marginTop: '16px',
+                                      padding: '16px',
+                                      borderRadius: '12px',
+                                      background: 'rgba(232, 245, 233, 0.4)',
+                                      border: '1px solid #c8e6c9',
+                                      display: 'flex',
+                                      flexDirection: 'column',
+                                      gap: '12px'
+                                    }}>
+                                      <h4 style={{ margin: 0, color: '#2e7d32', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                        ⏳ {user.role === 'Seller' ? 'Seller' : 'Delivery Partner'} Profile Edit Request Pending Approval
+                                      </h4>
+                                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+                                        <div>
+                                          <p style={{ margin: '0 0 4px 0', fontSize: '12px', color: '#666', fontWeight: 'bold' }}>Current Profile Info:</p>
+                                          {user.role === 'Seller' ? (
+                                            <div style={{ fontSize: '13px' }}>
+                                              <div><strong>Owner Name:</strong> {user.name}</div>
+                                              <div><strong>Shop Name:</strong> {user.shopName}</div>
+                                              <div><strong>Shop Address:</strong> {user.shopAddress}</div>
+                                            </div>
+                                          ) : (
+                                            <div style={{ fontSize: '13px' }}>
+                                              <div><strong>Full Name:</strong> {user.name}</div>
+                                              <div><strong>Mobile:</strong> {user.deliveryMobile}</div>
+                                              <div><strong>Vehicle:</strong> {user.deliveryVehicleType} ({user.deliveryVehicleNumber})</div>
+                                              <div><strong>Emergency Contact:</strong> {user.deliveryEmergencyContact}</div>
+                                              <div><strong>Address:</strong> {user.deliveryAddress}</div>
+                                            </div>
+                                          )}
+                                        </div>
+                                        <div>
+                                          <p style={{ margin: '0 0 4px 0', fontSize: '12px', color: '#2e7d32', fontWeight: 'bold' }}>Requested Profile Updates:</p>
+                                          {user.role === 'Seller' ? (
+                                            <div style={{ fontSize: '13px', color: '#1b5e20' }}>
+                                              <div><strong>Owner Name:</strong> {user.requestedName || <span style={{ color: '#999', fontStyle: 'italic' }}>No change</span>}</div>
+                                              <div><strong>Shop Name:</strong> {user.requestedShopName || <span style={{ color: '#999', fontStyle: 'italic' }}>No change</span>}</div>
+                                              <div><strong>Shop Address:</strong> {user.requestedShopAddress || <span style={{ color: '#999', fontStyle: 'italic' }}>No change</span>}</div>
+                                            </div>
+                                          ) : (
+                                            <div style={{ fontSize: '13px', color: '#1b5e20' }}>
+                                              <div><strong>Full Name:</strong> {user.requestedName || <span style={{ color: '#999', fontStyle: 'italic' }}>No change</span>}</div>
+                                              <div><strong>Mobile:</strong> {user.requestedDeliveryMobile || <span style={{ color: '#999', fontStyle: 'italic' }}>No change</span>}</div>
+                                              <div><strong>Vehicle:</strong> {user.requestedDeliveryVehicleType ? `${user.requestedDeliveryVehicleType} (${user.requestedDeliveryVehicleNumber || 'N/A'})` : <span style={{ color: '#999', fontStyle: 'italic' }}>No change</span>}</div>
+                                              <div><strong>Emergency Contact:</strong> {user.requestedDeliveryEmergencyContact || <span style={{ color: '#999', fontStyle: 'italic' }}>No change</span>}</div>
+                                              <div><strong>Address:</strong> {user.requestedDeliveryAddress || <span style={{ color: '#999', fontStyle: 'italic' }}>No change</span>}</div>
+                                            </div>
+                                          )}
+                                        </div>
+                                      </div>
+                                      <div style={{ display: 'flex', gap: '8px', marginTop: '4px' }}>
+                                        <button className="btn btn-primary btn-sm" onClick={() => approveProfileEditRequest(user.email, user)}>
+                                          Approve Profile Changes
+                                        </button>
+                                        <button className="btn btn-secondary btn-sm" onClick={() => rejectProfileEditRequest(user.email)}>
+                                          Decline Profile Changes
+                                        </button>
+                                      </div>
+                                    </div>
+                                  )}
                                 </td>
                               </tr>
                             )}
@@ -849,6 +1109,96 @@ function App() {
                 )}
               </div>
             )}
+
+            {activeTab === 'coupons' && (
+              <div className="glass-panel section-card">
+                <div className="section-header stacked-section-header">
+                  <h2>Coupon Directory</h2>
+                  <div className="toolbar-row">
+                    <button className="btn btn-primary" onClick={() => setShowCouponModal(true)}>
+                      <Plus size={16} /> Create Coupon
+                    </button>
+                  </div>
+                </div>
+
+                {coupons.length === 0 ? (
+                  <Empty icon={Ticket} title="No Coupons Found" text="Create coupons to offer discounts on checkout." />
+                ) : (
+                  <div className="table-container">
+                    <table className="modern-table">
+                      <thead>
+                        <tr>
+                          <th>Code</th>
+                          <th>Discount</th>
+                          <th>Min Order</th>
+                          <th>Max Discount</th>
+                          <th>Description</th>
+                          <th>Status</th>
+                          <th>Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {coupons.map(coupon => (
+                          <tr key={coupon.code}>
+                            <td>
+                              <p className="accent-text" style={{ fontWeight: 'bold' }}>{coupon.code}</p>
+                            </td>
+                            <td>
+                              <p>{coupon.discountPercent}% OFF</p>
+                            </td>
+                            <td>
+                              <p>₹{coupon.minOrderAmount || 0}</p>
+                            </td>
+                            <td>
+                              <p>{coupon.maxDiscount && coupon.maxDiscount < 999999 ? `₹${coupon.maxDiscount}` : 'Unlimited'}</p>
+                            </td>
+                            <td className="muted-cell">
+                              <p>{coupon.description || 'No description provided'}</p>
+                            </td>
+                            <td>
+                              <span className={`status-badge ${coupon.isActive ? 'verified' : 'rejected'}`}>
+                                {coupon.isActive ? 'Active' : 'Inactive'}
+                              </span>
+                            </td>
+                            <td>
+                              <div className="actions-row">
+                                <button className={`btn btn-sm ${coupon.isActive ? 'btn-secondary' : 'btn-primary'}`} onClick={() => toggleCouponActive(coupon.code, coupon.isActive)}>
+                                  {coupon.isActive ? 'Deactivate' : 'Activate'}
+                                </button>
+                                <button className="btn btn-danger btn-sm" onClick={() => deleteCoupon(coupon.code)}>
+                                  <Trash2 size={14} />
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {activeTab === 'settings' && (
+              <div className="glass-panel section-card">
+                <div className="section-header"><h2>Fulfilment Configuration</h2></div>
+                <form className="form-grid" onSubmit={saveServiceConfig}>
+                  <div className="form-group full-width">
+                    <label className="form-label">Service Cities (comma-separated)</label>
+                    <input className="form-control" value={serviceCitiesText} onChange={e => setServiceCitiesText(e.target.value)} placeholder="Delhi, Noida" />
+                  </div>
+                  <div className="form-group full-width">
+                    <label className="form-label">Service Pincodes (comma-separated)</label>
+                    <input className="form-control" value={servicePincodesText} onChange={e => setServicePincodesText(e.target.value)} placeholder="110001, 201301" />
+                  </div>
+                  <div className="form-group">
+                    <label className="form-label">Automatic payout delay (hours)</label>
+                    <input type="number" min="0" className="form-control" value={payoutDelayHours} onChange={e => setPayoutDelayHours(e.target.value)} required />
+                  </div>
+                  <div className="form-actions"><button className="btn btn-primary" type="submit">Save Settings</button></div>
+                </form>
+              </div>
+            )}
           </>
         )}
       </main>
@@ -890,6 +1240,45 @@ function App() {
               <div className="form-actions">
                 <button type="button" className="btn btn-secondary" onClick={() => setShowProductModal(false)}>Cancel</button>
                 <button type="submit" className="btn btn-primary">Publish Item</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {showCouponModal && (
+        <div className="modal-overlay">
+          <div className="glass-panel modal-content">
+            <button className="close-btn" onClick={() => setShowCouponModal(false)}>x</button>
+            <h2 className="modal-title"><Plus size={22} color="var(--color-accent)" /> Create New Coupon</h2>
+            <form onSubmit={handleCreateCoupon} className="form-grid">
+              <div className="form-group">
+                <label className="form-label">Coupon Code</label>
+                <input type="text" className="form-control" value={newCouponCode} onChange={e => setNewCouponCode(e.target.value)} placeholder="e.g. BAZAAR50" required />
+              </div>
+              <div className="form-group">
+                <label className="form-label">Discount Percent (1-100)</label>
+                <input type="number" min="1" max="100" className="form-control" value={newCouponDiscount} onChange={e => setNewCouponDiscount(e.target.value)} required />
+              </div>
+              <div className="form-group">
+                <label className="form-label">Min Order Amount (₹)</label>
+                <input type="number" min="0" step="0.01" className="form-control" value={newCouponMinOrder} onChange={e => setNewCouponMinOrder(e.target.value)} placeholder="0" />
+              </div>
+              <div className="form-group">
+                <label className="form-label">Max Discount Amount (₹)</label>
+                <input type="number" min="0" step="0.01" className="form-control" value={newCouponMaxDiscount} onChange={e => setNewCouponMaxDiscount(e.target.value)} placeholder="Unlimited" />
+              </div>
+              <div className="form-group full-width">
+                <label className="form-label">Description</label>
+                <input type="text" className="form-control" value={newCouponDesc} onChange={e => setNewCouponDesc(e.target.value)} placeholder="Description of the coupon" />
+              </div>
+              <div className="form-group full-width checkbox-row">
+                <input type="checkbox" id="coupon-active-check" checked={newCouponActive} onChange={e => setNewCouponActive(e.target.checked)} />
+                <label htmlFor="coupon-active-check">Mark as Active instantly</label>
+              </div>
+              <div className="form-actions">
+                <button type="button" className="btn btn-secondary" onClick={() => setShowCouponModal(false)}>Cancel</button>
+                <button type="submit" className="btn btn-primary">Create Coupon</button>
               </div>
             </form>
           </div>
