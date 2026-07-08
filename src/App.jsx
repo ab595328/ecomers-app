@@ -28,7 +28,8 @@ import {
   setDoc,
   updateDoc
 } from 'firebase/firestore';
-import { db } from './firebase';
+import { db, auth } from './firebase';
+import { signInWithEmailAndPassword, signOut as firebaseSignOut, onAuthStateChanged } from 'firebase/auth';
 
 const ORDER_STATUSES = ['Pending', 'Processing', 'Ready to Deliver', 'Shipped', 'Delivered', 'Cancelled', 'Seller Reject Requested'];
 const ROLE_FILTERS = ['All', 'User', 'Seller', 'DeliveryPartner', 'Admin'];
@@ -114,6 +115,44 @@ function App() {
   const [newProductDesc, setNewProductDesc] = useState('');
   const [newProductSeller, setNewProductSeller] = useState('admin@bazaar.com');
   const [newProductFeatured, setNewProductFeatured] = useState(false);
+  const [newProductImageFile, setNewProductImageFile] = useState(null);
+  const [newProductImagePreview, setNewProductImagePreview] = useState('');
+  const [newProductImageUrl, setNewProductImageUrl] = useState('');
+  const [productImageUploading, setProductImageUploading] = useState(false);
+  const [productImageUploadProgress, setProductImageUploadProgress] = useState(0);
+
+  // Settings tab state
+  const [appConfig, setAppConfig] = useState({});
+  const [serviceCitiesText, setServiceCitiesText] = useState('');
+  const [servicePincodesText, setServicePincodesText] = useState('');
+  const [payoutDelayHours, setPayoutDelayHours] = useState('24');
+
+  const saveServiceConfig = async (e) => {
+    e.preventDefault();
+    try {
+      const cities = serviceCitiesText.split(',').map(c => c.trim()).filter(Boolean);
+      const pincodes = servicePincodesText.split(',').map(p => p.trim()).filter(Boolean);
+      await updateDoc(doc(db, 'app_config', 'main'), {
+        serviceCities: cities,
+        servicePincodes: pincodes,
+        payoutDelayHours: parseInt(payoutDelayHours, 10) || 24
+      });
+      alert('Settings saved successfully!');
+    } catch (e) {
+      try {
+        const cities = serviceCitiesText.split(',').map(c => c.trim()).filter(Boolean);
+        const pincodes = servicePincodesText.split(',').map(p => p.trim()).filter(Boolean);
+        await setDoc(doc(db, 'app_config', 'main'), {
+          serviceCities: cities,
+          servicePincodes: pincodes,
+          payoutDelayHours: parseInt(payoutDelayHours, 10) || 24
+        }, { merge: true });
+        alert('Settings saved successfully!');
+      } catch (err) {
+        alert(`Error saving settings: ${err.message}`);
+      }
+    }
+  };
 
   // Coupon management states
   const [coupons, setCoupons] = useState([]);
@@ -124,21 +163,40 @@ function App() {
   const [newCouponMaxDiscount, setNewCouponMaxDiscount] = useState('');
   const [newCouponDesc, setNewCouponDesc] = useState('');
   const [newCouponActive, setNewCouponActive] = useState(true);
-
+  // Banners tab state
+  const [banners, setBanners] = useState([]);
+  const [showBannerModal, setShowBannerModal] = useState(false);
+  const [newBannerLabel, setNewBannerLabel] = useState('');
+  const [newBannerTitle, setNewBannerTitle] = useState('');
+  const [newBannerDesc, setNewBannerDesc] = useState('');
+  const [newBannerTargetCat, setNewBannerTargetCat] = useState('All');
+  const [newBannerGradientStart, setNewBannerGradientStart] = useState('#1B5E20');
+  const [newBannerGradientEnd, setNewBannerGradientEnd] = useState('#A5D6A7');
+  const [newBannerSortOrder, setNewBannerSortOrder] = useState('0');
+  const [newBannerActive, setNewBannerActive] = useState(true);
+  // On app load: restore session from localStorage AND re-authenticate Firebase Auth
+  // so Firestore rules (request.auth != null) work after page refresh
   useEffect(() => {
-    const savedSession = window.localStorage.getItem('bazaarAdminSession');
-    if (savedSession) {
-      try {
-        const sessionUser = JSON.parse(savedSession);
-        if (sessionUser?.email && sessionUser?.role === 'Admin') {
-          setAuthUser(sessionUser);
+    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+      const savedSession = window.localStorage.getItem('bazaarAdminSession');
+      if (firebaseUser && savedSession) {
+        // Firebase Auth is restored + we have a local session — trust both
+        try {
+          const sessionUser = JSON.parse(savedSession);
+          if (sessionUser?.email && sessionUser?.role === 'Admin') {
+            setAuthUser(sessionUser);
+          }
+        } catch (e) {
+          window.localStorage.removeItem('bazaarAdminSession');
         }
-      } catch (error) {
-        console.warn('Invalid admin session:', error);
+      } else if (savedSession && !firebaseUser) {
+        // We have a local session but Firebase Auth expired — clear it
         window.localStorage.removeItem('bazaarAdminSession');
       }
-    }
-    setAuthLoading(false);
+      setAuthLoading(false);
+    });
+
+    return () => unsubscribe();
   }, []);
 
   useEffect(() => {
@@ -160,11 +218,12 @@ function App() {
       return undefined;
     }
 
-    let unsubscribeUsers = () => { };
+     let unsubscribeUsers = () => { };
     let unsubscribeProducts = () => { };
     let unsubscribeOrders = () => { };
     let unsubscribeConfig = () => { };
     let unsubscribeCoupons = () => { };
+    let unsubscribeBanners = () => { };
 
     try {
       setLoading(true);
@@ -219,6 +278,17 @@ function App() {
         }
       );
 
+      unsubscribeBanners = onSnapshot(
+        collection(db, 'banners'),
+        snapshot => {
+          const list = snapshot.docs.map(bannerDoc => ({ ...bannerDoc.data(), id: bannerDoc.id }));
+          setBanners(list.sort((a, b) => Number(a.sortOrder || 0) - Number(b.sortOrder || 0)));
+        },
+        err => {
+          console.warn('Firestore banners sync failed:', err);
+        }
+      );
+
       unsubscribeConfig = onSnapshot(doc(db, 'app_config', 'main'), configDoc => {
         const config = configDoc.exists() ? configDoc.data() : {};
         setAppConfig(config);
@@ -238,6 +308,7 @@ function App() {
       unsubscribeOrders();
       unsubscribeConfig();
       unsubscribeCoupons();
+      unsubscribeBanners();
     };
   }, [authUser, useMockData]);
 
@@ -282,21 +353,48 @@ function App() {
     setLoginSubmitting(true);
     try {
       const email = loginEmail.trim().toLowerCase();
+
+      // Step 1: Sign into Firebase Auth so Firestore rules (request.auth != null) work
+      let firebaseAuthSuccess = false;
+      try {
+        await signInWithEmailAndPassword(auth, email, loginPassword);
+        firebaseAuthSuccess = true;
+      } catch (signInErr) {
+        // Maybe user doesn't exist in Firebase Auth yet — try creating them
+        try {
+          const { createUserWithEmailAndPassword } = await import('firebase/auth');
+          await createUserWithEmailAndPassword(auth, email, loginPassword);
+          firebaseAuthSuccess = true;
+          console.log('Auto-created Firebase Auth account for admin.');
+        } catch (createErr) {
+          console.warn('Firebase Auth failed:', createErr.message);
+        }
+      }
+
+      if (!firebaseAuthSuccess) {
+        setLoginError('Firebase Authentication failed. Please add this email manually in Firebase Console → Authentication → Users.');
+        return;
+      }
+
+      // Step 2: Verify admin role from Firestore (now auth is set, rules will pass)
       const adminSnap = await getDoc(doc(db, 'users', email));
 
       if (!adminSnap.exists()) {
-        setLoginError('No admin user found with this email.');
+        setLoginError('No admin user found in Firestore with this email. Please seed the database first.');
+        await firebaseSignOut(auth).catch(() => {});
         return;
       }
 
       const adminUser = { ...adminSnap.data(), email: adminSnap.id || email };
       if (adminUser.role !== 'Admin') {
-        setLoginError('This account is not marked as Admin.');
+        setLoginError(`This account is registered as "${adminUser.role}", not Admin.`);
+        await firebaseSignOut(auth).catch(() => {});
         return;
       }
 
       if ((adminUser.password || '') !== loginPassword) {
         setLoginError('Wrong password.');
+        await firebaseSignOut(auth).catch(() => {});
         return;
       }
 
@@ -316,6 +414,7 @@ function App() {
 
   const handleLogout = () => {
     window.localStorage.removeItem('bazaarAdminSession');
+    firebaseSignOut(auth).catch(() => {});
     setAuthUser(null);
     setUseMockData(false);
     setDbError(null);
@@ -503,6 +602,71 @@ function App() {
     }
   };
 
+  // Upload image to Cloudinary using unsigned upload preset
+  const uploadToCloudinary = (file) => {
+    return new Promise((resolve, reject) => {
+      const cloudName = import.meta.env.VITE_CLOUDINARY_CLOUD_NAME;
+      const uploadPreset = import.meta.env.VITE_CLOUDINARY_UPLOAD_PRESET;
+      const folder = import.meta.env.VITE_CLOUDINARY_FOLDER || '';
+
+      if (!cloudName || !uploadPreset) {
+        reject(new Error('Cloudinary is not configured. Add VITE_CLOUDINARY_CLOUD_NAME and VITE_CLOUDINARY_UPLOAD_PRESET to .env'));
+        return;
+      }
+
+      const formData = new FormData();
+      formData.append('file', file);
+      formData.append('upload_preset', uploadPreset);
+      formData.append('public_id', `admin_product_${Date.now()}`);
+      if (folder) formData.append('folder', folder);
+
+      // Use XMLHttpRequest to track upload progress
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', `https://api.cloudinary.com/v1_1/${cloudName}/image/upload`);
+
+      xhr.upload.addEventListener('progress', (e) => {
+        if (e.lengthComputable) {
+          const progress = Math.round((e.loaded / e.total) * 100);
+          setProductImageUploadProgress(progress);
+        }
+      });
+
+      xhr.onload = () => {
+        try {
+          const response = JSON.parse(xhr.responseText);
+          if (xhr.status >= 200 && xhr.status < 300 && response.secure_url) {
+            resolve(response.secure_url);
+          } else {
+            reject(new Error(response.error?.message || 'Cloudinary upload failed'));
+          }
+        } catch (e) {
+          reject(new Error('Invalid response from Cloudinary'));
+        }
+      };
+
+      xhr.onerror = () => reject(new Error('Network error during upload'));
+      xhr.send(formData);
+    });
+  };
+
+  const handleProductImageChange = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    setNewProductImageFile(file);
+    setNewProductImagePreview(URL.createObjectURL(file));
+    setProductImageUploading(true);
+    setProductImageUploadProgress(0);
+    try {
+      const url = await uploadToCloudinary(file);
+      setNewProductImageUrl(url);
+    } catch (err) {
+      alert(`Image upload failed: ${err.message}`);
+      setNewProductImageUrl('');
+    } finally {
+      setProductImageUploading(false);
+    }
+  };
+
   const handleCreateProduct = async e => {
     e.preventDefault();
     const priceNum = parseFloat(newProductPrice);
@@ -522,10 +686,11 @@ function App() {
       rating: 4.5,
       category: newProductCat || 'General',
       description: newProductDesc,
-      imageUrlName: 'img_hero_banner',
+      imageUrlName: newProductImageUrl || '',
       isFeatured: newProductFeatured,
       sellerEmail: newProductSeller || 'admin@bazaar.com',
-      extraImages: ''
+      extraImages: '',
+      stockQuantity: 100
     };
 
     if (useMockData) {
@@ -551,6 +716,11 @@ function App() {
     setNewProductCat('');
     setNewProductDesc('');
     setNewProductFeatured(false);
+    setNewProductImageFile(null);
+    setNewProductImagePreview('');
+    setNewProductImageUrl('');
+    setProductImageUploading(false);
+    setProductImageUploadProgress(0);
   };
 
   const updateOrder = async (orderId, payload) => {
@@ -637,6 +807,78 @@ function App() {
     setNewCouponActive(true);
   };
 
+  const toggleBannerActive = async (id, currentStatus) => {
+    if (useMockData) {
+      setBanners(banners.map(b => (b.id === id ? { ...b, isActive: !currentStatus } : b)));
+      return;
+    }
+    try {
+      await updateDoc(doc(db, 'banners', id), { isActive: !currentStatus });
+    } catch (e) {
+      alert(`Error updating banner: ${e.message}`);
+    }
+  };
+
+  const deleteBanner = async id => {
+    if (!window.confirm(`Are you sure you want to delete this banner?`)) return;
+    if (useMockData) {
+      setBanners(banners.filter(b => b.id !== id));
+      return;
+    }
+    try {
+      await deleteDoc(doc(db, 'banners', id));
+    } catch (e) {
+      alert(`Error deleting banner: ${e.message}`);
+    }
+  };
+
+  const handleCreateBanner = async e => {
+    e.preventDefault();
+    if (!newBannerTitle.trim() || !newBannerLabel.trim()) {
+      alert('Please fill in a valid title and label.');
+      return;
+    }
+
+    const bannerId = `banner_${Date.now()}`;
+    const newBann = {
+      id: bannerId,
+      label: newBannerLabel.trim(),
+      title: newBannerTitle.trim(),
+      description: newBannerDesc.trim(),
+      targetCategory: newBannerTargetCat,
+      gradientStart: newBannerGradientStart.trim() || '#1B5E20',
+      gradientEnd: newBannerGradientEnd.trim() || '#A5D6A7',
+      sortOrder: parseInt(newBannerSortOrder, 10) || 0,
+      isActive: newBannerActive
+    };
+
+    if (useMockData) {
+      setBanners([...banners, newBann]);
+      setShowBannerModal(false);
+      resetBannerForm();
+      return;
+    }
+
+    try {
+      await setDoc(doc(db, 'banners', bannerId), newBann);
+      setShowBannerModal(false);
+      resetBannerForm();
+    } catch (e) {
+      alert(`Error creating banner: ${e.message}`);
+    }
+  };
+
+  const resetBannerForm = () => {
+    setNewBannerLabel('');
+    setNewBannerTitle('');
+    setNewBannerDesc('');
+    setNewBannerTargetCat('All');
+    setNewBannerGradientStart('#1B5E20');
+    setNewBannerGradientEnd('#A5D6A7');
+    setNewBannerSortOrder('0');
+    setNewBannerActive(true);
+  };
+
   if (authLoading) {
     return (
       <div className="auth-screen">
@@ -702,7 +944,8 @@ function App() {
             ['products', ShoppingBag, 'Products'],
             ['orders', FileText, 'Orders'],
             ['coupons', Ticket, 'Coupons'],
-            ['settings', Settings, 'Service Settings']
+            ['banners', Sparkles, 'Banners'],
+            ['settings', Settings, 'Serviceable Areas']
           ].map(([tab, Icon, label]) => (
             <button key={tab} className={`nav-item ${activeTab === tab ? 'active' : ''}`} onClick={() => setActiveTab(tab)}>
               <Icon size={20} />
@@ -762,7 +1005,8 @@ function App() {
               {activeTab === 'products' && 'Inventory Products Catalog'}
               {activeTab === 'orders' && 'Order Transactions'}
               {activeTab === 'coupons' && 'Coupon Directory'}
-              {activeTab === 'settings' && 'Service Area & Payout Settings'}
+              {activeTab === 'banners' && 'Marketing Banners'}
+              {activeTab === 'settings' && 'Serviceable Area & Payout Settings'}
             </h1>
             <p>
               {activeTab === 'dashboard' && 'Monitor marketplace stats, verification queues, revenue, and data tools.'}
@@ -770,6 +1014,7 @@ function App() {
               {activeTab === 'products' && 'Add new items, manage featured products, and review seller inventory.'}
               {activeTab === 'orders' && 'Update workflow statuses, delivery assignment, payment details, and order flags.'}
               {activeTab === 'coupons' && 'Create, configure, and monitor discount promo coupons.'}
+              {activeTab === 'banners' && 'Manage rotating carousel billboard advertising banners shown in the mobile app.'}
               {activeTab === 'settings' && 'Control eligible cities, pincodes, and automatic Razorpay payout timing.'}
             </p>
           </div>
@@ -798,26 +1043,26 @@ function App() {
                   <Metric title="Pending Reviews" value={pendingSellersCount + pendingPartnersCount} icon={AlertTriangle} compact />
                 </div>
 
-                {/*
                 <div className="glass-panel section-card data-tools">
                   <div className="section-header">
-                    <h2><Database size={20} /> Firebase Database Tools</h2>
+                    <h2><Sparkles size={20} /> Database Tools</h2>
                   </div>
-                  <p>Seed Firestore with app-ready sample data, export a JSON backup, or restore a previous backup.</p>
+                  <p style={{fontSize:'13px', color:'var(--text-muted)', marginBottom:'12px'}}>
+                    Seed Firestore with default sample data for testing, or export/import a JSON backup.
+                  </p>
                   <div className="toolbar-row">
-                    <button className="btn btn-primary" onClick={seedFirestoreDatabase} disabled={useMockData}>
+                    <button className="btn btn-primary" onClick={_seedFirestoreDatabase}>
                       <Sparkles size={16} /> Seed Default Data
                     </button>
-                    <button className="btn btn-secondary" onClick={exportDatabaseToJson}>
-                      <Download size={16} /> Export JSON
+                    <button className="btn btn-secondary" onClick={_exportDatabaseToJson}>
+                      Export JSON
                     </button>
-                    <button className="btn btn-secondary" onClick={() => fileInputRef.current.click()} disabled={useMockData}>
-                      <Upload size={16} /> Import JSON
-                    </button>
-                    <input type="file" ref={fileInputRef} onChange={importDatabaseFromJson} accept=".json" hidden />
+                    <label className="btn btn-secondary" style={{cursor:'pointer'}}>
+                      Import JSON
+                      <input type="file" onChange={_importDatabaseFromJson} accept=".json" hidden />
+                    </label>
                   </div>
                 </div>
-                */}
 
                 <div className="dashboard-grid">
                   <RecentOrders orders={orders} setActiveTab={setActiveTab} />
@@ -1179,6 +1424,97 @@ function App() {
               </div>
             )}
 
+            {activeTab === 'banners' && (
+              <div className="glass-panel section-card">
+                <div className="section-header stacked-section-header">
+                  <h2>Banner Directory</h2>
+                  <div className="toolbar-row">
+                    <button className="btn btn-primary" onClick={() => setShowBannerModal(true)}>
+                      <Plus size={16} /> Create Banner
+                    </button>
+                  </div>
+                </div>
+
+                {banners.length === 0 ? (
+                  <Empty icon={Sparkles} title="No Banners Found" text="Create billboard banners to advertise products, category discounts, and special launch events on the mobile app home screen." />
+                ) : (
+                  <div className="table-container">
+                    <table className="modern-table">
+                      <thead>
+                        <tr>
+                          <th>Preview</th>
+                          <th>Label</th>
+                          <th>Title</th>
+                          <th>Description</th>
+                          <th>Target Category</th>
+                          <th>Sort Order</th>
+                          <th>Status</th>
+                          <th>Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {banners.map(banner => {
+                          const bgGradient = `linear-gradient(135deg, ${banner.gradientStart || '#1B5E20'}, ${banner.gradientEnd || '#A5D6A7'})`;
+                          return (
+                            <tr key={banner.id}>
+                              <td>
+                                <div style={{
+                                  width: '120px',
+                                  height: '60px',
+                                  background: bgGradient,
+                                  borderRadius: '8px',
+                                  display: 'flex',
+                                  flexDirection: 'column',
+                                  justifyContent: 'center',
+                                  padding: '8px',
+                                  boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
+                                  color: '#ffffff',
+                                  overflow: 'hidden'
+                                }}>
+                                  <span style={{ fontSize: '7px', background: '#FFD700', color: '#000000', fontWeight: '900', padding: '1px 3px', borderRadius: '3px', alignSelf: 'flex-start' }}>{banner.label}</span>
+                                  <span style={{ fontSize: '9px', fontWeight: 'bold', marginTop: '2px', whiteSpace: 'nowrap', textOverflow: 'ellipsis', overflow: 'hidden' }}>{banner.title}</span>
+                                </div>
+                              </td>
+                              <td>
+                                <p className="accent-text" style={{ fontWeight: 'bold' }}>{banner.label}</p>
+                              </td>
+                              <td>
+                                <p style={{ fontWeight: '600' }}>{banner.title}</p>
+                              </td>
+                              <td className="muted-cell">
+                                <p>{banner.description || 'No description'}</p>
+                              </td>
+                              <td>
+                                <span style={{ textTransform: 'capitalize', fontWeight: 'bold', fontSize: '12px' }}>{banner.targetCategory || 'All'}</span>
+                              </td>
+                              <td>
+                                <p>{banner.sortOrder || 0}</p>
+                              </td>
+                              <td>
+                                <span className={`status-badge ${banner.isActive ? 'verified' : 'rejected'}`}>
+                                  {banner.isActive ? 'Active' : 'Inactive'}
+                                </span>
+                              </td>
+                              <td>
+                                <div className="actions-row">
+                                  <button className={`btn btn-sm ${banner.isActive ? 'btn-secondary' : 'btn-primary'}`} onClick={() => toggleBannerActive(banner.id, banner.isActive)}>
+                                    {banner.isActive ? 'Deactivate' : 'Activate'}
+                                  </button>
+                                  <button className="btn btn-danger btn-sm" onClick={() => deleteBanner(banner.id)}>
+                                    <Trash2 size={14} />
+                                  </button>
+                                </div>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            )}
+
             {activeTab === 'settings' && (
               <div className="glass-panel section-card">
                 <div className="section-header"><h2>Fulfilment Configuration</h2></div>
@@ -1230,6 +1566,46 @@ function App() {
                 <input type="email" className="form-control" value={newProductSeller} onChange={e => setNewProductSeller(e.target.value)} />
               </div>
               <div className="form-group full-width">
+                <label className="form-label">Product Image (Firebase Storage)</label>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
+                  <label
+                    htmlFor="product-image-upload"
+                    className="btn btn-secondary btn-sm"
+                    style={{ cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '6px' }}
+                  >
+                    <Plus size={14} />
+                    {newProductImageFile ? 'Change Image' : 'Upload Image'}
+                  </label>
+                  <input
+                    id="product-image-upload"
+                    type="file"
+                    accept="image/*"
+                    style={{ display: 'none' }}
+                    onChange={handleProductImageChange}
+                  />
+                  {productImageUploading && (
+                    <span style={{ fontSize: '12px', color: 'var(--color-accent)' }}>
+                      <RefreshCw size={12} style={{ animation: 'spin 1.5s linear infinite', marginRight: '4px' }} />
+                      Uploading {productImageUploadProgress}%...
+                    </span>
+                  )}
+                  {newProductImageUrl && !productImageUploading && (
+                    <span style={{ fontSize: '11px', color: '#4caf50', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                      <CheckCircle size={12} /> Image uploaded to Firebase Storage
+                    </span>
+                  )}
+                </div>
+                {newProductImagePreview && (
+                  <div style={{ marginTop: '10px' }}>
+                    <img
+                      src={newProductImagePreview}
+                      alt="Preview"
+                      style={{ width: '120px', height: '120px', objectFit: 'cover', borderRadius: '10px', border: '2px solid var(--color-accent)' }}
+                    />
+                  </div>
+                )}
+              </div>
+              <div className="form-group full-width">
                 <label className="form-label">Product Description</label>
                 <textarea className="form-control" value={newProductDesc} onChange={e => setNewProductDesc(e.target.value)} />
               </div>
@@ -1239,7 +1615,9 @@ function App() {
               </div>
               <div className="form-actions">
                 <button type="button" className="btn btn-secondary" onClick={() => setShowProductModal(false)}>Cancel</button>
-                <button type="submit" className="btn btn-primary">Publish Item</button>
+                <button type="submit" className="btn btn-primary" disabled={productImageUploading}>
+                  {productImageUploading ? 'Uploading Image...' : 'Publish Item'}
+                </button>
               </div>
             </form>
           </div>
@@ -1279,6 +1657,65 @@ function App() {
               <div className="form-actions">
                 <button type="button" className="btn btn-secondary" onClick={() => setShowCouponModal(false)}>Cancel</button>
                 <button type="submit" className="btn btn-primary">Create Coupon</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {showBannerModal && (
+        <div className="modal-overlay">
+          <div className="glass-panel modal-content">
+            <button className="close-btn" onClick={() => setShowBannerModal(false)}>x</button>
+            <h2 className="modal-title"><Plus size={22} color="var(--color-accent)" /> Create New Banner</h2>
+            <form onSubmit={handleCreateBanner} className="form-grid">
+              <div className="form-group">
+                <label className="form-label">Banner Label (e.g. LAUNCH SPECIAL)</label>
+                <input type="text" className="form-control" value={newBannerLabel} onChange={e => setNewBannerLabel(e.target.value)} placeholder="LAUNCH SPECIAL" required />
+              </div>
+              <div className="form-group">
+                <label className="form-label">Banner Title</label>
+                <input type="text" className="form-control" value={newBannerTitle} onChange={e => setNewBannerTitle(e.target.value)} placeholder="50% OFF SMART TECH" required />
+              </div>
+              <div className="form-group full-width">
+                <label className="form-label">Banner Description</label>
+                <input type="text" className="form-control" value={newBannerDesc} onChange={e => setNewBannerDesc(e.target.value)} placeholder="Futuristic wellness tech with AMOLED screens & rapid charge." />
+              </div>
+              <div className="form-group">
+                <label className="form-label">Target Category Link</label>
+                <select className="form-control" value={newBannerTargetCat} onChange={e => setNewBannerTargetCat(e.target.value)}>
+                  <option value="All">All Categories</option>
+                  <option value="Electronics">Electronics</option>
+                  <option value="Fresh Products">Fresh Products</option>
+                  <option value="Fashion">Fashion</option>
+                  <option value="Home & Kitchen">Home & Kitchen</option>
+                </select>
+              </div>
+              <div className="form-group">
+                <label className="form-label">Sort Order Index</label>
+                <input type="number" className="form-control" value={newBannerSortOrder} onChange={e => setNewBannerSortOrder(e.target.value)} placeholder="0" />
+              </div>
+              <div className="form-group">
+                <label className="form-label">Gradient Start Color (HEX)</label>
+                <div style={{ display: 'flex', gap: '8px' }}>
+                  <input type="color" value={newBannerGradientStart} onChange={e => setNewBannerGradientStart(e.target.value)} style={{ width: '40px', height: '38px', padding: '0', border: '1px solid var(--border-color)', borderRadius: '4px', cursor: 'pointer' }} />
+                  <input type="text" className="form-control" value={newBannerGradientStart} onChange={e => setNewBannerGradientStart(e.target.value)} placeholder="#1B5E20" required />
+                </div>
+              </div>
+              <div className="form-group">
+                <label className="form-label">Gradient End Color (HEX)</label>
+                <div style={{ display: 'flex', gap: '8px' }}>
+                  <input type="color" value={newBannerGradientEnd} onChange={e => setNewBannerGradientEnd(e.target.value)} style={{ width: '40px', height: '38px', padding: '0', border: '1px solid var(--border-color)', borderRadius: '4px', cursor: 'pointer' }} />
+                  <input type="text" className="form-control" value={newBannerGradientEnd} onChange={e => setNewBannerGradientEnd(e.target.value)} placeholder="#A5D6A7" required />
+                </div>
+              </div>
+              <div className="form-group full-width checkbox-row">
+                <input type="checkbox" id="banner-active-check" checked={newBannerActive} onChange={e => setNewBannerActive(e.target.checked)} />
+                <label htmlFor="banner-active-check">Mark as Active instantly</label>
+              </div>
+              <div className="form-actions">
+                <button type="button" className="btn btn-secondary" onClick={() => setShowBannerModal(false)}>Cancel</button>
+                <button type="submit" className="btn btn-primary">Create Banner</button>
               </div>
             </form>
           </div>
@@ -1388,6 +1825,7 @@ function ProductsTab({ products, setShowProductModal, toggleProductFeatured, del
           <table className="modern-table product-table">
             <thead>
               <tr>
+                <th>Image</th>
                 <th>ID</th>
                 <th>Product Name</th>
                 <th>Category</th>
@@ -1400,6 +1838,32 @@ function ProductsTab({ products, setShowProductModal, toggleProductFeatured, del
             <tbody>
               {products.map(product => (
                 <tr key={product.id}>
+                  <td>
+                    {product.imageUrlName && (product.imageUrlName.startsWith('http://') || product.imageUrlName.startsWith('https://')) ? (
+                      <img
+                        src={product.imageUrlName}
+                        alt={product.name}
+                        style={{
+                          width: '52px',
+                          height: '52px',
+                          objectFit: 'cover',
+                          borderRadius: '8px',
+                          border: '1px solid #e0e0e0',
+                          display: 'block'
+                        }}
+                        onError={e => { e.target.style.display = 'none'; e.target.nextSibling.style.display = 'flex'; }}
+                      />
+                    ) : null}
+                    <div style={{
+                      width: '52px', height: '52px', borderRadius: '8px',
+                      background: 'rgba(0,128,0,0.08)',
+                      display: (!product.imageUrlName || (!product.imageUrlName.startsWith('http://') && !product.imageUrlName.startsWith('https://'))) ? 'flex' : 'none',
+                      alignItems: 'center', justifyContent: 'center',
+                      border: '1px dashed #ccc'
+                    }}>
+                      <ShoppingBag size={20} style={{ opacity: 0.3 }} />
+                    </div>
+                  </td>
                   <td className="table-subtext">#{product.id}</td>
                   <td>
                     <p>{product.name}</p>
