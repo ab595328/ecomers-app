@@ -1,0 +1,12 @@
+
+> admin-panel@0.0.0 dev
+> vite --port 5174
+
+[2m11:52:55 pm[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m Re-optimizing dependencies because vite config has changed
+
+  [32m[1mVITE[22m v8.1.0[39m  [2mready in [0m[1m879[22m[2m[0m ms[22m
+
+  [32m➜[39m  [1mLocal[22m:   [36mhttp://localhost:[1m5174[22m/[39m
+  [32m➜[39m  [1mNetwork[22m: [36mhttp://172.23.192.1:[1m5174[22m/[39m
+  [32m➜[39m  [1mNetwork[22m: [36mhttp://10.120.205.38:[1m5174[22m/[39m
+[2m11:52:56 pm[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [optimizer] bundling dependencies...
