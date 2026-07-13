@@ -2276,6 +2276,8 @@ function ProductsTab({ products, setShowProductModal, toggleProductFeatured, del
 }
 
 function PaymentsTab({ entries, totals, payoutAccounts, withdrawalRequests, onUpdateWithdrawalStatus, users }) {
+  const [subTab, setSubTab] = useState('ledger');
+
   const returnRows = entries.flatMap(entry =>
     entry.returns.map(request => ({
       ...request,
@@ -2296,276 +2298,307 @@ function PaymentsTab({ entries, totals, payoutAccounts, withdrawalRequests, onUp
         <Metric title="Payout Pending" value={formatCurrency(totals.payoutPending)} icon={Clock} compact />
       </div>
 
-      <div className="glass-panel section-card">
-        <div className="section-header stacked-section-header">
-          <h2><CreditCard size={20} /> Payment Details</h2>
-        </div>
+      <div style={{ display: 'flex', gap: '10px', margin: '24px 0 16px 0', flexWrap: 'wrap' }}>
+        {[
+          { id: 'ledger', label: 'Payment Ledger', icon: CreditCard },
+          { id: 'returns', label: 'Return Debits', icon: RefreshCw },
+          { id: 'payouts', label: 'Payout Accounts', icon: CheckCircle },
+          { id: 'requests', label: 'Withdrawal Requests', icon: Clock }
+        ].map(tab => {
+          const Icon = tab.icon;
+          const active = subTab === tab.id;
+          return (
+            <button
+              key={tab.id}
+              className={`btn btn-sm ${active ? 'btn-primary' : 'btn-secondary'}`}
+              onClick={() => setSubTab(tab.id)}
+              style={{ display: 'flex', alignItems: 'center', gap: '8px' }}
+            >
+              <Icon size={14} />
+              {tab.label}
+            </button>
+          );
+        })}
+      </div>
 
-        {entries.length === 0 ? (
-          <Empty icon={CreditCard} title="No Payments Found" text="Customer payment and payout details will appear after orders are placed." />
-        ) : (
-          <div className="table-container settlement-table-container">
-            <table className="modern-table settlement-table">
-              <thead>
-                <tr>
-                  <th>Order & User</th>
-                  <th>Payment</th>
-                  <th>Product Seller Split</th>
-                  <th>Delivery Boy</th>
-                  <th>Status</th>
-                </tr>
-              </thead>
-              <tbody>
-                {entries.map(entry => (
-                  <tr key={entry.order.orderId}>
-                    <td>
-                      <p className="accent-text">{entry.order.orderId}</p>
-                      <span className="table-subtext">{entry.buyerName}</span>
-                      <span className="table-subtext block-text">{entry.buyerEmail}</span>
-                      <span className="table-subtext block-text">{new Date(Number(entry.order.orderDate || 0)).toLocaleString()}</span>
-                    </td>
-                    <td>
-                      <p className="accent-text">{formatCurrency(entry.totalPaid)}</p>
-                      <span className="table-subtext">{entry.order.paymentMode || 'COD'}</span>
-                      {entry.order.paymentTransactionId && (
-                        <span className="table-subtext block-text">Txn: {entry.order.paymentTransactionId}</span>
-                      )}
-                      {entry.order.couponApplied && <span className="status-badge verified">{entry.order.couponApplied}</span>}
-                    </td>
-                    <td>
-                      <div className="settlement-lines">
-                        {entry.items.length === 0 ? (
-                          <span className="table-subtext">No product mapping found</span>
-                        ) : (
-                          entry.items.map((item, index) => (
-                            <div className="settlement-line" key={`${entry.order.orderId}-${item.productId || item.productName}-${index}`}>
-                              <div>
-                                <p>{item.productName}</p>
-                                <span className="table-subtext">
-                                  Qty {item.quantity} x {formatCurrency(item.unitPrice)} | Seller: {item.sellerName}
-                                </span>
-                                {item.sellerEmail && <span className="table-subtext block-text">{item.sellerEmail}</span>}
-                              </div>
-                              <strong>{formatCurrency(item.sellerReceivable)}</strong>
-                            </div>
-                          ))
+      {subTab === 'ledger' && (
+        <div className="glass-panel section-card">
+          <div className="section-header stacked-section-header">
+            <h2><CreditCard size={20} /> Payment Details</h2>
+          </div>
+
+          {entries.length === 0 ? (
+            <Empty icon={CreditCard} title="No Payments Found" text="Customer payment and payout details will appear after orders are placed." />
+          ) : (
+            <div className="table-container settlement-table-container">
+              <table className="modern-table settlement-table">
+                <thead>
+                  <tr>
+                    <th>Order & User</th>
+                    <th>Payment</th>
+                    <th>Product Seller Split</th>
+                    <th>Delivery Boy</th>
+                    <th>Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {entries.map(entry => (
+                    <tr key={entry.order.orderId}>
+                      <td>
+                        <p className="accent-text">{entry.order.orderId}</p>
+                        <span className="table-subtext">{entry.buyerName}</span>
+                        <span className="table-subtext block-text">{entry.buyerEmail}</span>
+                        <span className="table-subtext block-text">{new Date(Number(entry.order.orderDate || 0)).toLocaleString()}</span>
+                      </td>
+                      <td>
+                        <p className="accent-text">{formatCurrency(entry.totalPaid)}</p>
+                        <span className="table-subtext">{entry.order.paymentMode || 'COD'}</span>
+                        {entry.order.paymentTransactionId && (
+                          <span className="table-subtext block-text">Txn: {entry.order.paymentTransactionId}</span>
                         )}
-                      </div>
-                    </td>
-                    <td>
-                      {entry.deliveryPartnerEmail ? (
-                        <>
-                          <p>{entry.deliveryPartnerName}</p>
-                          <span className="table-subtext">{entry.deliveryPartnerEmail}</span>
-                          <p className="accent-text payout-amount">{formatCurrency(entry.deliveryEarning)}</p>
-                        </>
-                      ) : (
-                        <>
-                          <span className="status-badge pending">Not Accepted</span>
-                          <p className="table-subtext payout-amount">{formatCurrency(entry.deliveryEarning)} pending</p>
-                        </>
-                      )}
-                    </td>
-                    <td>
-                      <span className={`status-badge ${statusClass(entry.order.status)}`}>{entry.order.status || 'Pending'}</span>
-                      <span className="table-subtext block-text">{entry.order.deliveryStatus || 'Delivery not started'}</span>
-                      {isDeliveredOrder(entry.order) && (
-                        <span className="table-subtext block-text">
-                          Return window: {entry.returnWindowEnd ? new Date(entry.returnWindowEnd).toLocaleDateString() : 'N/A'}
-                        </span>
-                      )}
-                      <span className={`status-badge ${entry.payoutReady ? 'verified' : 'pending'}`}>
-                        {entry.payoutReady ? 'Withdraw Ready' : 'Withdraw Pending'}
-                      </span>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
-
-      <div className="glass-panel section-card">
-        <div className="section-header stacked-section-header">
-          <h2><RefreshCw size={20} /> Return Debit Details</h2>
-        </div>
-
-        {returnRows.length === 0 ? (
-          <Empty icon={RefreshCw} title="No Return Debits" text="Approved or completed return deductions will appear here." />
-        ) : (
-          <div className="table-container settlement-table-container">
-            <table className="modern-table return-table">
-              <thead>
-                <tr>
-                  <th>Return</th>
-                  <th>Seller Account</th>
-                  <th>Debit Breakup</th>
-                  <th>Status</th>
-                </tr>
-              </thead>
-              <tbody>
-                {returnRows.map(request => (
-                  <tr key={`${request.orderId}-${request.id}`}>
-                    <td>
-                      <p className="accent-text">{request.id || 'Return Request'}</p>
-                      <span className="table-subtext">Order: {request.orderId}</span>
-                      <span className="table-subtext block-text">Buyer: {request.buyerEmail}</span>
-                      <span className="table-subtext block-text">{request.productName}</span>
-                    </td>
-                    <td>
-                      <p>{request.sellerName}</p>
-                      <span className="table-subtext">{request.sellerEmail || 'System Store'}</span>
-                    </td>
-                    <td>
-                      <p className="accent-text">{formatCurrency(request.debitAmount)}</p>
-                      <span className="table-subtext">Refund: {formatCurrency(request.returnAmount)}</span>
-                      <span className="table-subtext block-text">Return delivery: {formatCurrency(request.deliveryFee)}</span>
-                    </td>
-                    <td>
-                      <span className={`status-badge ${request.isCompleted ? 'cancelled' : 'pending'}`}>
-                        {request.isCompleted ? 'Actual Debit' : 'Expected Debit'}
-                      </span>
-                      <span className="table-subtext block-text">{request.status || 'Pending'}</span>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
-
-      <div className="glass-panel section-card">
-        <div className="section-header stacked-section-header">
-          <h2><CheckCircle size={20} /> Withdraw Pending / Ready</h2>
-          <p className="section-note">Return window: {RETURN_WINDOW_DAYS} days after delivery. Ready amount can be paid to the listed bank account.</p>
-        </div>
-
-        {payoutAccounts.length === 0 ? (
-          <Empty icon={CheckCircle} title="No Payout Accounts" text="Seller and delivery partner payout rows will appear after delivered orders." />
-        ) : (
-          <div className="table-container settlement-table-container">
-            <table className="modern-table payout-table">
-              <thead>
-                <tr>
-                  <th>Account</th>
-                  <th>Bank Details</th>
-                  <th>Ready To Pay</th>
-                  <th>Pending</th>
-                  <th>Return Debits</th>
-                  <th>Orders</th>
-                </tr>
-              </thead>
-              <tbody>
-                {payoutAccounts.map(account => (
-                  <tr key={account.key}>
-                    <td>
-                      <p>{account.name}</p>
-                      <span className={`role-chip role-${account.role.toLowerCase()}`}>{roleLabel(account.role)}</span>
-                      <span className="table-subtext block-text">{account.email || 'System account'}</span>
-                    </td>
-                    <td className="muted-cell">
-                      <p>{account.bankDetails}</p>
-                    </td>
-                    <td>
-                      <p className="accent-text">{formatCurrency(account.readyAmount)}</p>
-                      <span className="status-badge verified">Withdraw Ready</span>
-                    </td>
-                    <td>
-                      <p>{formatCurrency(account.pendingAmount)}</p>
-                      <span className="status-badge pending">Return Window Pending</span>
-                    </td>
-                    <td>
-                      <p className="status-badge cancelled">{formatCurrency(account.returnDebits)} cut</p>
-                      {account.expectedReturnDebits > 0 && (
-                        <span className="table-subtext block-text">Expected: {formatCurrency(account.expectedReturnDebits)}</span>
-                      )}
-                    </td>
-                    <td className="muted-cell">
-                      <p>{account.orders.join(', ')}</p>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
-
-      <div className="glass-panel section-card">
-        <div className="section-header stacked-section-header">
-          <h2><CreditCard size={20} /> Withdrawal Requests</h2>
-          <p className="section-note">Admin can mark each request as Pending, Success, or Rejected.</p>
-        </div>
-
-        {withdrawalRequests.length === 0 ? (
-          <Empty icon={CreditCard} title="No Withdrawal Requests" text="Seller and delivery partner withdrawal requests will appear here." />
-        ) : (
-          <div className="table-container settlement-table-container">
-            <table className="modern-table payout-table">
-              <thead>
-                <tr>
-                  <th>Request</th>
-                  <th>Account</th>
-                  <th>Amount</th>
-                  <th>Bank Details</th>
-                  <th>Status</th>
-                  <th>Admin Action</th>
-                </tr>
-              </thead>
-              <tbody>
-                {withdrawalRequests.map(request => {
-                  const accountEmail = request.accountEmail || request.deliveryPartnerEmail || '';
-                  const accountName = getDisplayNameByEmail(users, accountEmail, accountEmail || 'Account');
-
-                  return (
-                    <tr key={request.id}>
-                      <td>
-                        <p className="accent-text">{request.id}</p>
-                        <span className="table-subtext">{new Date(Number(request.requestDate || 0)).toLocaleString()}</span>
-                        {request.payoutId && <span className="table-subtext block-text">Payout: {request.payoutId}</span>}
+                        {entry.order.couponApplied && <span className="status-badge verified">{entry.order.couponApplied}</span>}
                       </td>
                       <td>
-                        <p>{accountName}</p>
-                        <span className={`role-chip role-${(request.accountRole || 'DeliveryPartner').toLowerCase()}`}>{roleLabel(request.accountRole)}</span>
-                        <span className="table-subtext block-text">{accountEmail}</span>
-                      </td>
-                      <td>
-                        <p className="accent-text">{formatCurrency(request.amount)}</p>
-                      </td>
-                      <td className="muted-cell">
-                        <p>{request.bankDetails || 'Bank details not available'}</p>
-                        {request.failureReason && <span className="table-subtext block-text">Reason: {request.failureReason}</span>}
-                      </td>
-                      <td>
-                        <span className={`status-badge ${withdrawalStatusClass(request.status)}`}>
-                          {withdrawalStatusLabel(request.status)}
-                        </span>
-                        <span className="table-subtext block-text">{request.status || 'Scheduled'}</span>
-                      </td>
-                      <td>
-                        <div className="actions-row">
-                          {WITHDRAWAL_STATUS_ACTIONS.map(action => (
-                            <button
-                              key={action.status}
-                              className={`btn btn-sm ${action.className === 'cancelled' ? 'btn-danger' : action.className === 'verified' ? 'btn-primary' : 'btn-secondary'}`}
-                              onClick={() => onUpdateWithdrawalStatus(request.id, action.status)}
-                              disabled={request.status === action.status}
-                            >
-                              {action.label}
-                            </button>
-                          ))}
+                        <div className="settlement-lines">
+                          {entry.items.length === 0 ? (
+                            <span className="table-subtext">No product mapping found</span>
+                          ) : (
+                            entry.items.map((item, index) => (
+                              <div className="settlement-line" key={`${entry.order.orderId}-${item.productId || item.productName}-${index}`}>
+                                <div>
+                                  <p>{item.productName}</p>
+                                  <span className="table-subtext">
+                                    Qty {item.quantity} x {formatCurrency(item.unitPrice)} | Seller: {item.sellerName}
+                                  </span>
+                                  {item.sellerEmail && <span className="table-subtext block-text">{item.sellerEmail}</span>}
+                                </div>
+                                <strong>{formatCurrency(item.sellerReceivable)}</strong>
+                              </div>
+                            ))
+                          )}
                         </div>
                       </td>
+                      <td>
+                        {entry.deliveryPartnerEmail ? (
+                          <>
+                            <p>{entry.deliveryPartnerName}</p>
+                            <span className="table-subtext">{entry.deliveryPartnerEmail}</span>
+                            <p className="accent-text payout-amount">{formatCurrency(entry.deliveryEarning)}</p>
+                          </>
+                        ) : (
+                          <>
+                            <span className="status-badge pending">Not Accepted</span>
+                            <p className="table-subtext payout-amount">{formatCurrency(entry.deliveryEarning)} pending</p>
+                          </>
+                        )}
+                      </td>
+                      <td>
+                        <span className={`status-badge ${statusClass(entry.order.status)}`}>{entry.order.status || 'Pending'}</span>
+                        <span className="table-subtext block-text">{entry.order.deliveryStatus || 'Delivery not started'}</span>
+                        {isDeliveredOrder(entry.order) && (
+                          <span className="table-subtext block-text">
+                            Return window: {entry.returnWindowEnd ? new Date(entry.returnWindowEnd).toLocaleDateString() : 'N/A'}
+                          </span>
+                        )}
+                        <span className={`status-badge ${entry.payoutReady ? 'verified' : 'pending'}`}>
+                          {entry.payoutReady ? 'Withdraw Ready' : 'Withdraw Pending'}
+                        </span>
+                      </td>
                     </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+
+      {subTab === 'returns' && (
+        <div className="glass-panel section-card">
+          <div className="section-header stacked-section-header">
+            <h2><RefreshCw size={20} /> Return Debit Details</h2>
           </div>
-        )}
-      </div>
+
+          {returnRows.length === 0 ? (
+            <Empty icon={RefreshCw} title="No Return Debits" text="Approved or completed return deductions will appear here." />
+          ) : (
+            <div className="table-container settlement-table-container">
+              <table className="modern-table return-table">
+                <thead>
+                  <tr>
+                    <th>Return</th>
+                    <th>Seller Account</th>
+                    <th>Debit Breakup</th>
+                    <th>Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {returnRows.map(request => (
+                    <tr key={`${request.orderId}-${request.id}`}>
+                      <td>
+                        <p className="accent-text">{request.id || 'Return Request'}</p>
+                        <span className="table-subtext">Order: {request.orderId}</span>
+                        <span className="table-subtext block-text">Buyer: {request.buyerEmail}</span>
+                        <span className="table-subtext block-text">{request.productName}</span>
+                      </td>
+                      <td>
+                        <p>{request.sellerName}</p>
+                        <span className="table-subtext">{request.sellerEmail || 'System Store'}</span>
+                      </td>
+                      <td>
+                        <p className="accent-text">{formatCurrency(request.debitAmount)}</p>
+                        <span className="table-subtext">Refund: {formatCurrency(request.returnAmount)}</span>
+                        <span className="table-subtext block-text">Return delivery: {formatCurrency(request.deliveryFee)}</span>
+                      </td>
+                      <td>
+                        <span className={`status-badge ${request.isCompleted ? 'cancelled' : 'pending'}`}>
+                          {request.isCompleted ? 'Actual Debit' : 'Expected Debit'}
+                        </span>
+                        <span className="table-subtext block-text">{request.status || 'Pending'}</span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+
+      {subTab === 'payouts' && (
+        <div className="glass-panel section-card">
+          <div className="section-header stacked-section-header">
+            <h2><CheckCircle size={20} /> Withdraw Pending / Ready</h2>
+            <p className="section-note">Return window: {RETURN_WINDOW_DAYS} days after delivery. Ready amount can be paid to the listed bank account.</p>
+          </div>
+
+          {payoutAccounts.length === 0 ? (
+            <Empty icon={CheckCircle} title="No Payout Accounts" text="Seller and delivery partner payout rows will appear after delivered orders." />
+          ) : (
+            <div className="table-container settlement-table-container">
+              <table className="modern-table payout-table">
+                <thead>
+                  <tr>
+                    <th>Account</th>
+                    <th>Bank Details</th>
+                    <th>Ready To Pay</th>
+                    <th>Pending</th>
+                    <th>Return Debits</th>
+                    <th>Orders</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {payoutAccounts.map(account => (
+                    <tr key={account.key}>
+                      <td>
+                        <p>{account.name}</p>
+                        <span className={`role-chip role-${account.role.toLowerCase()}`}>{roleLabel(account.role)}</span>
+                        <span className="table-subtext block-text">{account.email || 'System account'}</span>
+                      </td>
+                      <td className="muted-cell">
+                        <p>{account.bankDetails}</p>
+                      </td>
+                      <td>
+                        <p className="accent-text">{formatCurrency(account.readyAmount)}</p>
+                        <span className="status-badge verified">Withdraw Ready</span>
+                      </td>
+                      <td>
+                        <p>{formatCurrency(account.pendingAmount)}</p>
+                        <span className="status-badge pending">Return Window Pending</span>
+                      </td>
+                      <td>
+                        <p className="status-badge cancelled">{formatCurrency(account.returnDebits)} cut</p>
+                        {account.expectedReturnDebits > 0 && (
+                          <span className="table-subtext block-text">Expected: {formatCurrency(account.expectedReturnDebits)}</span>
+                        )}
+                      </td>
+                      <td className="muted-cell">
+                        <p>{account.orders.join(', ')}</p>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+
+      {subTab === 'requests' && (
+        <div className="glass-panel section-card">
+          <div className="section-header stacked-section-header">
+            <h2><CreditCard size={20} /> Withdrawal Requests</h2>
+            <p className="section-note">Admin can mark each request as Pending, Success, or Rejected.</p>
+          </div>
+
+          {withdrawalRequests.length === 0 ? (
+            <Empty icon={CreditCard} title="No Withdrawal Requests" text="Seller and delivery partner withdrawal requests will appear here." />
+          ) : (
+            <div className="table-container settlement-table-container">
+              <table className="modern-table payout-table">
+                <thead>
+                  <tr>
+                    <th>Request</th>
+                    <th>Account</th>
+                    <th>Amount</th>
+                    <th>Bank Details</th>
+                    <th>Status</th>
+                    <th>Admin Action</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {withdrawalRequests.map(request => {
+                    const accountEmail = request.accountEmail || request.deliveryPartnerEmail || '';
+                    const accountName = getDisplayNameByEmail(users, accountEmail, accountEmail || 'Account');
+
+                    return (
+                      <tr key={request.id}>
+                        <td>
+                          <p className="accent-text">{request.id}</p>
+                          <span className="table-subtext">{new Date(Number(request.requestDate || 0)).toLocaleString()}</span>
+                          {request.payoutId && <span className="table-subtext block-text">Payout: {request.payoutId}</span>}
+                        </td>
+                        <td>
+                          <p>{accountName}</p>
+                          <span className={`role-chip role-${(request.accountRole || 'DeliveryPartner').toLowerCase()}`}>{roleLabel(request.accountRole)}</span>
+                          <span className="table-subtext block-text">{accountEmail}</span>
+                        </td>
+                        <td>
+                          <p className="accent-text">{formatCurrency(request.amount)}</p>
+                        </td>
+                        <td className="muted-cell">
+                          <p>{request.bankDetails || 'Bank details not available'}</p>
+                          {request.failureReason && <span className="table-subtext block-text">Reason: {request.failureReason}</span>}
+                        </td>
+                        <td>
+                          <span className={`status-badge ${withdrawalStatusClass(request.status)}`}>
+                            {withdrawalStatusLabel(request.status)}
+                          </span>
+                          <span className="table-subtext block-text">{request.status || 'Scheduled'}</span>
+                        </td>
+                        <td>
+                          <div className="actions-row">
+                            {WITHDRAWAL_STATUS_ACTIONS.map(action => (
+                              <button
+                                key={action.status}
+                                className={`btn btn-sm ${action.className === 'cancelled' ? 'btn-danger' : action.className === 'verified' ? 'btn-primary' : 'btn-secondary'}`}
+                                onClick={() => onUpdateWithdrawalStatus(request.id, action.status)}
+                                disabled={request.status === action.status}
+                              >
+                                {action.label}
+                              </button>
+                            ))}
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
