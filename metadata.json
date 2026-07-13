@@ -1,6 +1,0 @@
-{
-  "name": "ZYL VOR BAZAAR",
-  "description": "A premium e-commerce app with high-tech catalogs, personal dashboard, fast delivery, and robust settings.",
-  "requestFramePermissions": [],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
-}
