@@ -476,6 +476,55 @@ textarea.form-control {
   min-width: 980px;
 }
 
+.settlement-table {
+  min-width: 1120px;
+}
+
+.return-table,
+.payout-table {
+  min-width: 980px;
+}
+
+.settlement-table-container {
+  margin-top: 0;
+}
+
+.settlement-lines {
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+}
+
+.settlement-line {
+  display: grid;
+  grid-template-columns: minmax(240px, 1fr) auto;
+  gap: 0.85rem;
+  align-items: start;
+  padding-bottom: 0.65rem;
+  border-bottom: 1px solid var(--border-glass);
+}
+
+.settlement-line:last-child {
+  padding-bottom: 0;
+  border-bottom: none;
+}
+
+.settlement-line strong,
+.payout-amount {
+  white-space: nowrap;
+}
+
+.block-text {
+  display: block;
+  margin-top: 0.2rem;
+}
+
+.section-note {
+  color: var(--text-secondary);
+  font-size: 0.82rem;
+  margin: -0.5rem 0 0;
+}
+
 .product-table thead th {
   position: sticky;
   top: 0;
@@ -1280,4 +1329,3 @@ textarea.form-control {
   align-items: center;
   width: fit-content;
 }
-

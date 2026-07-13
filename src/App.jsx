@@ -3,6 +3,7 @@ import {
   AlertTriangle,
   CheckCircle,
   Clock,
+  CreditCard,
   FileText,
   KeyRound,
   LayoutDashboard,
@@ -28,11 +29,18 @@ import {
   setDoc,
   updateDoc
 } from 'firebase/firestore';
+import { signInWithEmailAndPassword, signOut as firebaseSignOut } from 'firebase/auth';
 import { db, auth } from './firebase';
-import { signInWithEmailAndPassword, signOut as firebaseSignOut, onAuthStateChanged } from 'firebase/auth';
 
 const ORDER_STATUSES = ['Pending', 'Processing', 'Ready to Deliver', 'Shipped', 'Delivered', 'Cancelled', 'Seller Reject Requested'];
 const ROLE_FILTERS = ['All', 'User', 'Seller', 'DeliveryPartner', 'Admin'];
+const RETURN_WINDOW_DAYS = 7;
+const DAY_MS = 24 * 60 * 60 * 1000;
+const WITHDRAWAL_STATUS_ACTIONS = [
+  { label: 'Pending', status: 'Pending', className: 'pending' },
+  { label: 'Success', status: 'Paid', className: 'verified' },
+  { label: 'Rejected', status: 'Failed', className: 'cancelled' }
+];
 
 const defaultProducts = [
   { id: 1, name: 'ZYL Sound Pro Wireless ANC', price: 129.99, originalPrice: 189.99, rating: 4.8, category: 'Electronics', imageUrlName: 'img_hero_banner', description: 'Premium high-fidelity wireless spatial audio headphones with leading hybrid Active Noise Cancelation. Styled in matte black with dynamic metallic accents.', isFeatured: true, sellerEmail: 'seller@store.com', extraImages: '' },
@@ -61,6 +69,15 @@ const defaultOrders = [
   { orderId: 'ORD-5431', email: 'buyer@bazaar.com', orderDate: Date.now() - 3600000 * 24, totalAmount: 4.99, status: 'Delivered', itemsSummary: '1x Premium Farms Organic Apples (1kg)', paymentMode: 'Wallet', deliveryAddress: '22 Market Street, Eco City', deliveryPartnerEmail: 'rider@bazaar.com', deliveryStatus: 'Delivered', sellerConfirmed: true }
 ];
 
+const defaultCategories = [
+  { name: 'Electronics', isReturnable: true },
+  { name: 'Fashion', isReturnable: true },
+  { name: 'Fresh Products', isReturnable: true },
+  { name: 'Home & Kitchen', isReturnable: true },
+  { name: 'Food', isReturnable: false },
+  { name: 'Vegetables', isReturnable: false }
+];
+
 function roleLabel(role) {
   if (role === 'DeliveryPartner') return 'Delivery Partner';
   return role || 'User';
@@ -72,6 +89,288 @@ function statusClass(status) {
 
 function formatCurrency(value) {
   return `₹${Number(value || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}`;
+}
+
+function parseProductQuantities(value) {
+  if (!value || typeof value !== 'string') return new Map();
+  return new Map(
+    value
+      .split(',')
+      .map(entry => {
+        const [rawId, rawQty] = entry.split(':');
+        const productId = Number(rawId);
+        const quantity = Number(rawQty);
+        return Number.isFinite(productId) && Number.isFinite(quantity) && quantity > 0
+          ? [productId, quantity]
+          : null;
+      })
+      .filter(Boolean)
+  );
+}
+
+function parseSummaryLine(line) {
+  const text = String(line || '').trim();
+  const leadingQty = text.match(/^(\d+)\s*x\s*(.+)$/i);
+  if (leadingQty) return { name: leadingQty[2].trim(), quantity: Number(leadingQty[1]) || 1 };
+
+  const trailingQty = text.match(/^(.+?)\s*x\s*(\d+)$/i);
+  if (trailingQty) return { name: trailingQty[1].trim(), quantity: Number(trailingQty[2]) || 1 };
+
+  return { name: text, quantity: 1 };
+}
+
+function parseReturnRequests(value) {
+  if (!value || typeof value !== 'string') return [];
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function getDisplayNameByEmail(users, email, fallback = 'N/A') {
+  const user = users.find(u => (u.email || '').toLowerCase() === String(email || '').toLowerCase());
+  return user?.shopName || user?.name || email || fallback;
+}
+
+function getUserByEmail(users, email) {
+  return users.find(u => (u.email || '').toLowerCase() === String(email || '').toLowerCase());
+}
+
+function getBankDetails(user) {
+  if (!user) return 'Bank details not available';
+  return user.sellerBankAccount || user.deliveryBankAccount || 'Bank details not available';
+}
+
+function isDeliveredOrder(order) {
+  return String(order.status || '').toLowerCase() === 'delivered' ||
+    String(order.deliveryStatus || '').toLowerCase() === 'delivered';
+}
+
+function getReturnWindowEnd(order) {
+  const deliveredAt = Number(order.deliveredAt || order.deliveryDate || order.orderDeliveredAt || order.orderDate || 0);
+  return deliveredAt > 0 ? deliveredAt + RETURN_WINDOW_DAYS * DAY_MS : 0;
+}
+
+function isReturnWindowClosed(order) {
+  const windowEnd = getReturnWindowEnd(order);
+  return isDeliveredOrder(order) && windowEnd > 0 && Date.now() >= windowEnd;
+}
+
+function withdrawalStatusLabel(status) {
+  if (status === 'Paid') return 'Success';
+  if (status === 'Failed') return 'Rejected';
+  if (status === 'Processing') return 'Processing';
+  return 'Pending';
+}
+
+function withdrawalStatusClass(status) {
+  if (status === 'Paid') return 'verified';
+  if (status === 'Failed') return 'cancelled';
+  return 'pending';
+}
+
+function buildSettlementEntries(orders, products, users) {
+  const productsById = new Map(products.map(product => [Number(product.id), product]));
+  const productsByName = new Map(products.map(product => [String(product.name || '').toLowerCase(), product]));
+
+  return orders.map(order => {
+    const quantityMap = parseProductQuantities(order.productQuantities);
+    let items = Array.from(quantityMap.entries()).map(([productId, quantity]) => {
+      const product = productsById.get(Number(productId));
+      const unitPrice = Number(product?.price || 0);
+      return {
+        productId,
+        productName: product?.name || `Product #${productId}`,
+        sellerEmail: product?.sellerEmail || '',
+        sellerName: getDisplayNameByEmail(users, product?.sellerEmail, product?.sellerEmail || 'System Store'),
+        quantity,
+        unitPrice,
+        grossAmount: unitPrice * quantity
+      };
+    });
+
+    if (items.length === 0) {
+      items = String(order.itemsSummary || '')
+        .split(',')
+        .map(parseSummaryLine)
+        .filter(item => item.name)
+        .map(item => {
+          const product = productsByName.get(item.name.toLowerCase());
+          const unitPrice = Number(product?.price || 0);
+          return {
+            productId: product?.id || '',
+            productName: product?.name || item.name,
+            sellerEmail: product?.sellerEmail || '',
+            sellerName: getDisplayNameByEmail(users, product?.sellerEmail, product?.sellerEmail || 'System Store'),
+            quantity: item.quantity,
+            unitPrice,
+            grossAmount: unitPrice * item.quantity
+          };
+        });
+    }
+
+    const grossProductsAmount = items.reduce((sum, item) => sum + item.grossAmount, 0);
+    const orderItemsAmount = Number(order.itemsAmount || 0);
+    const totalAmount = Number(order.totalAmount || 0);
+    const deliveryEarning = Number(order.deliveryCharge || 0) ||
+      (orderItemsAmount > 0 ? Math.max(totalAmount - orderItemsAmount, 0) : 0);
+    const sellerPool = orderItemsAmount > 0
+      ? orderItemsAmount
+      : (grossProductsAmount > 0 ? grossProductsAmount : Math.max(totalAmount - deliveryEarning, 0));
+
+    const settledItems = items.map(item => ({
+      ...item,
+      sellerReceivable: grossProductsAmount > 0
+        ? (item.grossAmount / grossProductsAmount) * sellerPool
+        : item.grossAmount
+    }));
+
+    const returns = parseReturnRequests(order.returnRequestsJson)
+      .filter(request => request && request.status !== 'Rejected')
+      .map(request => {
+        const sellerEmail = request.sellerEmail || productsById.get(Number(request.productId))?.sellerEmail || '';
+        const sellerName = getDisplayNameByEmail(users, sellerEmail, sellerEmail || 'System Store');
+        const returnAmount = Number(request.returnAmount || 0);
+        const deliveryFee = Number(request.deliveryFee || 0);
+        return {
+          ...request,
+          sellerEmail,
+          sellerName,
+          returnAmount,
+          deliveryFee,
+          debitAmount: returnAmount + deliveryFee,
+          isCompleted: request.status === 'Completed'
+        };
+      });
+
+    return {
+      order,
+      items: settledItems,
+      returns,
+      buyerEmail: order.email || '',
+      buyerName: getDisplayNameByEmail(users, order.email, order.email || 'Customer'),
+      totalPaid: totalAmount,
+      sellerReceivable: settledItems.reduce((sum, item) => sum + item.sellerReceivable, 0),
+      deliveryPartnerEmail: order.deliveryPartnerEmail || '',
+      deliveryPartnerName: getDisplayNameByEmail(users, order.deliveryPartnerEmail, order.deliveryPartnerEmail || 'Not accepted'),
+      deliveryEarning,
+      returnWindowEnd: getReturnWindowEnd(order),
+      payoutReady: isReturnWindowClosed(order)
+    };
+  });
+}
+
+function buildPayoutAccounts(entries, users) {
+  const accounts = new Map();
+
+  const ensureAccount = (role, email, name) => {
+    const key = `${role}:${email || name}`;
+    if (!accounts.has(key)) {
+      const user = getUserByEmail(users, email);
+      accounts.set(key, {
+        key,
+        role,
+        email,
+        name: name || getDisplayNameByEmail(users, email, email || 'Account'),
+        bankDetails: getBankDetails(user),
+        readyAmount: 0,
+        pendingAmount: 0,
+        returnDebits: 0,
+        expectedReturnDebits: 0,
+        orders: new Set()
+      });
+    }
+    return accounts.get(key);
+  };
+
+  entries.forEach(entry => {
+    if (!isDeliveredOrder(entry.order)) return;
+
+    entry.items.forEach(item => {
+      const account = ensureAccount('Seller', item.sellerEmail, item.sellerName);
+      const completedDebits = entry.returns
+        .filter(request => request.isCompleted && (
+          Number(request.productId || 0) === Number(item.productId || 0) ||
+          (!request.productId && request.sellerEmail === item.sellerEmail)
+        ))
+        .reduce((sum, request) => sum + request.debitAmount, 0);
+      const expectedDebits = entry.returns
+        .filter(request => !request.isCompleted && (
+          Number(request.productId || 0) === Number(item.productId || 0) ||
+          (!request.productId && request.sellerEmail === item.sellerEmail)
+        ))
+        .reduce((sum, request) => sum + request.debitAmount, 0);
+      const netAmount = Math.max(item.sellerReceivable - completedDebits, 0);
+
+      if (entry.payoutReady) account.readyAmount += netAmount;
+      else account.pendingAmount += netAmount;
+      account.returnDebits += completedDebits;
+      account.expectedReturnDebits += expectedDebits;
+      account.orders.add(entry.order.orderId);
+    });
+
+    if (entry.deliveryPartnerEmail) {
+      const account = ensureAccount('DeliveryPartner', entry.deliveryPartnerEmail, entry.deliveryPartnerName);
+      const returnPickupEarnings = entry.returns
+        .filter(request => request.isCompleted && request.deliveryPartnerEmail === entry.deliveryPartnerEmail)
+        .reduce((sum, request) => sum + request.deliveryFee, 0);
+      const totalDelivery = entry.deliveryEarning + returnPickupEarnings;
+
+      if (entry.payoutReady) account.readyAmount += totalDelivery;
+      else account.pendingAmount += totalDelivery;
+      account.orders.add(entry.order.orderId);
+    }
+
+    entry.returns
+      .filter(request => request.isCompleted && request.deliveryPartnerEmail && request.deliveryPartnerEmail !== entry.deliveryPartnerEmail)
+      .forEach(request => {
+        const account = ensureAccount(
+          'DeliveryPartner',
+          request.deliveryPartnerEmail,
+          getDisplayNameByEmail(users, request.deliveryPartnerEmail, request.deliveryPartnerEmail)
+        );
+        if (entry.payoutReady) account.readyAmount += request.deliveryFee;
+        else account.pendingAmount += request.deliveryFee;
+        account.orders.add(`${entry.order.orderId} return`);
+      });
+  });
+
+  return Array.from(accounts.values())
+    .map(account => ({ ...account, orders: Array.from(account.orders) }))
+    .filter(account => account.readyAmount > 0 || account.pendingAmount > 0 || account.returnDebits > 0 || account.expectedReturnDebits > 0)
+    .sort((a, b) => b.readyAmount - a.readyAmount || b.pendingAmount - a.pendingAmount);
+}
+
+function buildReturnRequestRows(orders, products, users) {
+  const productsById = new Map(products.map(product => [Number(product.id), product]));
+
+  return orders.flatMap(order => (
+    parseReturnRequests(order.returnRequestsJson).map(request => {
+      const product = productsById.get(Number(request.productId));
+      const sellerEmail = request.sellerEmail || product?.sellerEmail || '';
+      const deliveryPartnerEmail = request.deliveryPartnerEmail || '';
+      const returnAmount = Number(request.returnAmount || product?.price || 0);
+      const deliveryFee = Number(request.deliveryFee || 0);
+
+      return {
+        ...request,
+        orderId: order.orderId,
+        order,
+        productName: request.productName || product?.name || `Product #${request.productId || 'N/A'}`,
+        sellerEmail,
+        sellerName: getDisplayNameByEmail(users, sellerEmail, sellerEmail || 'System Store'),
+        customerEmail: request.customerEmail || order.email || '',
+        customerName: getDisplayNameByEmail(users, request.customerEmail || order.email, request.customerEmail || order.email || 'Customer'),
+        deliveryPartnerEmail,
+        deliveryPartnerName: deliveryPartnerEmail ? getDisplayNameByEmail(users, deliveryPartnerEmail, deliveryPartnerEmail) : 'Not accepted',
+        returnAmount,
+        deliveryFee,
+        debitAmount: returnAmount + deliveryFee
+      };
+    })
+  )).sort((a, b) => Number(b.requestDate || 0) - Number(a.requestDate || 0));
 }
 
 function DetailLine({ label, value }) {
@@ -95,6 +394,8 @@ function App() {
   const [users, setUsers] = useState([]);
   const [products, setProducts] = useState([]);
   const [orders, setOrders] = useState([]);
+  const [categories, setCategories] = useState([]);
+  const [withdrawalRequests, setWithdrawalRequests] = useState([]);
   const [loading, setLoading] = useState(false);
   const [dbError, setDbError] = useState(null);
   const [useMockData, setUseMockData] = useState(false);
@@ -104,8 +405,16 @@ function App() {
   const [userRoleFilter, setUserRoleFilter] = useState('All');
   const [orderSearch, setOrderSearch] = useState('');
   const [orderStatusFilter, setOrderStatusFilter] = useState('All');
+  const [returnSearch, setReturnSearch] = useState('');
+  const [returnStatusFilter, setReturnStatusFilter] = useState('All');
   const [expandedUserEmail, setExpandedUserEmail] = useState('');
   const [expandedOrderId, setExpandedOrderId] = useState('');
+  const [appConfig, setAppConfig] = useState({});
+  const [serviceCitiesText, setServiceCitiesText] = useState('');
+  const [servicePincodesText, setServicePincodesText] = useState('');
+  const [payoutDelayHours, setPayoutDelayHours] = useState('24');
+  const [newCategoryName, setNewCategoryName] = useState('');
+  const [newCategoryReturnable, setNewCategoryReturnable] = useState(true);
 
   const [showProductModal, setShowProductModal] = useState(false);
   const [newProductName, setNewProductName] = useState('');
@@ -115,44 +424,6 @@ function App() {
   const [newProductDesc, setNewProductDesc] = useState('');
   const [newProductSeller, setNewProductSeller] = useState('admin@bazaar.com');
   const [newProductFeatured, setNewProductFeatured] = useState(false);
-  const [newProductImageFile, setNewProductImageFile] = useState(null);
-  const [newProductImagePreview, setNewProductImagePreview] = useState('');
-  const [newProductImageUrl, setNewProductImageUrl] = useState('');
-  const [productImageUploading, setProductImageUploading] = useState(false);
-  const [productImageUploadProgress, setProductImageUploadProgress] = useState(0);
-
-  // Settings tab state
-  const [appConfig, setAppConfig] = useState({});
-  const [serviceCitiesText, setServiceCitiesText] = useState('');
-  const [servicePincodesText, setServicePincodesText] = useState('');
-  const [payoutDelayHours, setPayoutDelayHours] = useState('24');
-
-  const saveServiceConfig = async (e) => {
-    e.preventDefault();
-    try {
-      const cities = serviceCitiesText.split(',').map(c => c.trim()).filter(Boolean);
-      const pincodes = servicePincodesText.split(',').map(p => p.trim()).filter(Boolean);
-      await updateDoc(doc(db, 'app_config', 'main'), {
-        serviceCities: cities,
-        servicePincodes: pincodes,
-        payoutDelayHours: parseInt(payoutDelayHours, 10) || 24
-      });
-      alert('Settings saved successfully!');
-    } catch (e) {
-      try {
-        const cities = serviceCitiesText.split(',').map(c => c.trim()).filter(Boolean);
-        const pincodes = servicePincodesText.split(',').map(p => p.trim()).filter(Boolean);
-        await setDoc(doc(db, 'app_config', 'main'), {
-          serviceCities: cities,
-          servicePincodes: pincodes,
-          payoutDelayHours: parseInt(payoutDelayHours, 10) || 24
-        }, { merge: true });
-        alert('Settings saved successfully!');
-      } catch (err) {
-        alert(`Error saving settings: ${err.message}`);
-      }
-    }
-  };
 
   // Coupon management states
   const [coupons, setCoupons] = useState([]);
@@ -163,40 +434,21 @@ function App() {
   const [newCouponMaxDiscount, setNewCouponMaxDiscount] = useState('');
   const [newCouponDesc, setNewCouponDesc] = useState('');
   const [newCouponActive, setNewCouponActive] = useState(true);
-  // Banners tab state
-  const [banners, setBanners] = useState([]);
-  const [showBannerModal, setShowBannerModal] = useState(false);
-  const [newBannerLabel, setNewBannerLabel] = useState('');
-  const [newBannerTitle, setNewBannerTitle] = useState('');
-  const [newBannerDesc, setNewBannerDesc] = useState('');
-  const [newBannerTargetCat, setNewBannerTargetCat] = useState('All');
-  const [newBannerGradientStart, setNewBannerGradientStart] = useState('#1B5E20');
-  const [newBannerGradientEnd, setNewBannerGradientEnd] = useState('#A5D6A7');
-  const [newBannerSortOrder, setNewBannerSortOrder] = useState('0');
-  const [newBannerActive, setNewBannerActive] = useState(true);
-  // On app load: restore session from localStorage AND re-authenticate Firebase Auth
-  // so Firestore rules (request.auth != null) work after page refresh
+
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
-      const savedSession = window.localStorage.getItem('bazaarAdminSession');
-      if (firebaseUser && savedSession) {
-        // Firebase Auth is restored + we have a local session — trust both
-        try {
-          const sessionUser = JSON.parse(savedSession);
-          if (sessionUser?.email && sessionUser?.role === 'Admin') {
-            setAuthUser(sessionUser);
-          }
-        } catch (e) {
-          window.localStorage.removeItem('bazaarAdminSession');
+    const savedSession = window.localStorage.getItem('bazaarAdminSession');
+    if (savedSession) {
+      try {
+        const sessionUser = JSON.parse(savedSession);
+        if (sessionUser?.email && sessionUser?.role === 'Admin') {
+          setAuthUser(sessionUser);
         }
-      } else if (savedSession && !firebaseUser) {
-        // We have a local session but Firebase Auth expired — clear it
+      } catch (error) {
+        console.warn('Invalid admin session:', error);
         window.localStorage.removeItem('bazaarAdminSession');
       }
-      setAuthLoading(false);
-    });
-
-    return () => unsubscribe();
+    }
+    setAuthLoading(false);
   }, []);
 
   useEffect(() => {
@@ -213,17 +465,20 @@ function App() {
       setUsers(defaultUsers);
       setProducts(defaultProducts);
       setOrders(defaultOrders);
+      setCategories(defaultCategories);
+      setWithdrawalRequests([]);
       setCoupons([]);
       setLoading(false);
       return undefined;
     }
 
-     let unsubscribeUsers = () => { };
+    let unsubscribeUsers = () => { };
     let unsubscribeProducts = () => { };
     let unsubscribeOrders = () => { };
     let unsubscribeConfig = () => { };
     let unsubscribeCoupons = () => { };
-    let unsubscribeBanners = () => { };
+    let unsubscribeCategories = () => { };
+    let unsubscribeWithdrawals = () => { };
 
     try {
       setLoading(true);
@@ -278,15 +533,29 @@ function App() {
         }
       );
 
-      unsubscribeBanners = onSnapshot(
-        collection(db, 'banners'),
+      unsubscribeCategories = onSnapshot(
+        collection(db, 'categories'),
         snapshot => {
-          const list = snapshot.docs.map(bannerDoc => ({ ...bannerDoc.data(), id: bannerDoc.id }));
-          setBanners(list.sort((a, b) => Number(a.sortOrder || 0) - Number(b.sortOrder || 0)));
+          const list = snapshot.docs.map(categoryDoc => ({
+            name: categoryDoc.data().name || categoryDoc.id,
+            isReturnable: categoryDoc.data().isReturnable !== false
+          }));
+          setCategories(list.sort((a, b) => a.name.localeCompare(b.name)));
         },
-        err => {
-          console.warn('Firestore banners sync failed:', err);
-        }
+        err => console.warn('Firestore categories sync failed:', err)
+      );
+
+      unsubscribeWithdrawals = onSnapshot(
+        collection(db, 'withdrawal_requests'),
+        snapshot => {
+          const list = snapshot.docs.map(withdrawDoc => ({
+            ...withdrawDoc.data(),
+            id: withdrawDoc.id,
+            accountEmail: withdrawDoc.data().accountEmail || withdrawDoc.data().deliveryPartnerEmail || ''
+          }));
+          setWithdrawalRequests(list.sort((a, b) => Number(b.requestDate || 0) - Number(a.requestDate || 0)));
+        },
+        err => console.warn('Firestore withdrawals sync failed:', err)
       );
 
       unsubscribeConfig = onSnapshot(doc(db, 'app_config', 'main'), configDoc => {
@@ -308,7 +577,8 @@ function App() {
       unsubscribeOrders();
       unsubscribeConfig();
       unsubscribeCoupons();
-      unsubscribeBanners();
+      unsubscribeCategories();
+      unsubscribeWithdrawals();
     };
   }, [authUser, useMockData]);
 
@@ -322,6 +592,49 @@ function App() {
   const totalRevenue = orders
     .filter(o => ['Delivered', 'Processing', 'Ready to Deliver', 'Shipped'].includes(o.status))
     .reduce((sum, o) => sum + Number(o.totalAmount || 0), 0);
+
+  const settlementEntries = useMemo(
+    () => buildSettlementEntries(orders, products, users),
+    [orders, products, users]
+  );
+
+  const payoutAccounts = useMemo(
+    () => buildPayoutAccounts(settlementEntries, users),
+    [settlementEntries, users]
+  );
+
+  const settlementTotals = useMemo(() => {
+    const returnDebit = settlementEntries.reduce(
+      (sum, entry) => sum + entry.returns.filter(request => request.isCompleted).reduce((total, request) => total + request.debitAmount, 0),
+      0
+    );
+    const expectedReturnDebit = settlementEntries.reduce(
+      (sum, entry) => sum + entry.returns.filter(request => !request.isCompleted).reduce((total, request) => total + request.debitAmount, 0),
+      0
+    );
+    const payoutReady = payoutAccounts.reduce((sum, account) => sum + account.readyAmount, 0);
+    const payoutPending = payoutAccounts.reduce((sum, account) => sum + account.pendingAmount, 0);
+
+    return settlementEntries.reduce(
+      (totals, entry) => ({
+        paid: totals.paid + entry.totalPaid,
+        sellers: totals.sellers + entry.sellerReceivable,
+        delivery: totals.delivery + entry.deliveryEarning,
+        returnDebit,
+        expectedReturnDebit,
+        payoutReady,
+        payoutPending
+      }),
+      { paid: 0, sellers: 0, delivery: 0, returnDebit, expectedReturnDebit, payoutReady, payoutPending }
+    );
+  }, [payoutAccounts, settlementEntries]);
+
+  const returnRows = useMemo(
+    () => buildReturnRequestRows(orders, products, users),
+    [orders, products, users]
+  );
+
+  const pendingReturnCount = returnRows.filter(request => (request.status || 'Pending') === 'Pending').length;
 
   const filteredUsers = useMemo(() => {
     const query = userSearch.trim().toLowerCase();
@@ -347,54 +660,53 @@ function App() {
     });
   }, [orderSearch, orderStatusFilter, orders]);
 
+  const filteredReturnRows = useMemo(() => {
+    const query = returnSearch.trim().toLowerCase();
+    return returnRows.filter(request => {
+      const status = request.status || 'Pending';
+      const matchesStatus = returnStatusFilter === 'All' || status === returnStatusFilter;
+      const searchBlob = [
+        request.id,
+        request.orderId,
+        request.productName,
+        request.customerEmail,
+        request.sellerEmail,
+        request.deliveryPartnerEmail,
+        request.reason,
+        status
+      ].filter(Boolean).join(' ').toLowerCase();
+      return matchesStatus && (!query || searchBlob.includes(query));
+    });
+  }, [returnRows, returnSearch, returnStatusFilter]);
+
   const handleLogin = async event => {
     event.preventDefault();
     setLoginError('');
     setLoginSubmitting(true);
     try {
       const email = loginEmail.trim().toLowerCase();
+      // First sign in with Firebase Auth so the client gets authenticated
+      await signInWithEmailAndPassword(auth, email, loginPassword);
 
-      // Step 1: Sign into Firebase Auth so Firestore rules (request.auth != null) work
-      let firebaseAuthSuccess = false;
-      try {
-        await signInWithEmailAndPassword(auth, email, loginPassword);
-        firebaseAuthSuccess = true;
-      } catch (signInErr) {
-        // Maybe user doesn't exist in Firebase Auth yet — try creating them
-        try {
-          const { createUserWithEmailAndPassword } = await import('firebase/auth');
-          await createUserWithEmailAndPassword(auth, email, loginPassword);
-          firebaseAuthSuccess = true;
-          console.log('Auto-created Firebase Auth account for admin.');
-        } catch (createErr) {
-          console.warn('Firebase Auth failed:', createErr.message);
-        }
-      }
-
-      if (!firebaseAuthSuccess) {
-        setLoginError('Firebase Authentication failed. Please add this email manually in Firebase Console → Authentication → Users.');
-        return;
-      }
-
-      // Step 2: Verify admin role from Firestore (now auth is set, rules will pass)
+      // Fetch the admin details (this check is now authorized because the client is logged in)
       const adminSnap = await getDoc(doc(db, 'users', email));
 
       if (!adminSnap.exists()) {
-        setLoginError('No admin user found in Firestore with this email. Please seed the database first.');
-        await firebaseSignOut(auth).catch(() => {});
+        await firebaseSignOut(auth);
+        setLoginError('No admin user found with this email.');
         return;
       }
 
       const adminUser = { ...adminSnap.data(), email: adminSnap.id || email };
       if (adminUser.role !== 'Admin') {
-        setLoginError(`This account is registered as "${adminUser.role}", not Admin.`);
-        await firebaseSignOut(auth).catch(() => {});
+        await firebaseSignOut(auth);
+        setLoginError('This account is not marked as Admin.');
         return;
       }
 
       if ((adminUser.password || '') !== loginPassword) {
+        await firebaseSignOut(auth);
         setLoginError('Wrong password.');
-        await firebaseSignOut(auth).catch(() => {});
         return;
       }
 
@@ -412,9 +724,13 @@ function App() {
     }
   };
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
+    try {
+      await firebaseSignOut(auth);
+    } catch (e) {
+      console.warn('Firebase auth signout failed:', e);
+    }
     window.localStorage.removeItem('bazaarAdminSession');
-    firebaseSignOut(auth).catch(() => {});
     setAuthUser(null);
     setUseMockData(false);
     setDbError(null);
@@ -425,7 +741,7 @@ function App() {
       alert('Please connect to your live Firebase project to seed data.');
       return;
     }
-    if (!window.confirm('This will seed default users, products, and orders to your Firestore database. Continue?')) return;
+    if (!window.confirm('This will seed default users, products, orders, and categories to your Firestore database. Continue?')) return;
 
     try {
       setLoading(true);
@@ -433,6 +749,7 @@ function App() {
       for (const u of defaultUsers) await setDoc(doc(db, 'users', u.email), u);
       for (const p of defaultProducts) await setDoc(doc(db, 'products', p.id.toString()), p);
       for (const o of defaultOrders) await setDoc(doc(db, 'orders', o.orderId), o);
+      for (const c of defaultCategories) await setDoc(doc(db, 'categories', c.name), c);
       setDbStatusMsg('Database successfully seeded with default catalog data.');
       setTimeout(() => setDbStatusMsg(''), 5000);
     } catch (e) {
@@ -447,6 +764,7 @@ function App() {
       users,
       products,
       orders,
+      categories,
       exportedAt: new Date().toISOString(),
       projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID
     };
@@ -472,13 +790,14 @@ function App() {
         if (!importedData.users || !importedData.products || !importedData.orders) {
           throw new Error('Invalid backup file format. Must contain users, products, and orders.');
         }
-        if (!window.confirm(`Found ${importedData.users.length} users, ${importedData.products.length} products, and ${importedData.orders.length} orders. Import them into your database?`)) return;
+        if (!window.confirm(`Found ${importedData.users.length} users, ${importedData.products.length} products, ${importedData.orders.length} orders, and ${(importedData.categories || []).length} categories. Import them into your database?`)) return;
 
         setLoading(true);
         setDbStatusMsg('Importing data. Please wait...');
         for (const u of importedData.users) if (u.email) await setDoc(doc(db, 'users', u.email), u);
         for (const p of importedData.products) if (p.id) await setDoc(doc(db, 'products', p.id.toString()), p);
         for (const o of importedData.orders) if (o.orderId) await setDoc(doc(db, 'orders', o.orderId), o);
+        for (const c of importedData.categories || []) if (c.name) await setDoc(doc(db, 'categories', c.name), c);
         setDbStatusMsg('Database backup successfully restored.');
         setTimeout(() => setDbStatusMsg(''), 5000);
       } catch (err) {
@@ -510,7 +829,6 @@ function App() {
       shopAddress: user.requestedShopAddress || user.shopAddress,
       shopAddressLat: user.requestedShopAddress ? user.requestedShopAddressLat : user.shopAddressLat || 0,
       shopAddressLng: user.requestedShopAddress ? user.requestedShopAddressLng : user.shopAddressLng || 0,
-
       deliveryMobile: user.requestedDeliveryMobile || user.deliveryMobile || "",
       deliveryVehicleType: user.requestedDeliveryVehicleType || user.deliveryVehicleType || "",
       deliveryVehicleNumber: user.requestedDeliveryVehicleNumber || user.deliveryVehicleNumber || "",
@@ -602,71 +920,6 @@ function App() {
     }
   };
 
-  // Upload image to Cloudinary using unsigned upload preset
-  const uploadToCloudinary = (file) => {
-    return new Promise((resolve, reject) => {
-      const cloudName = import.meta.env.VITE_CLOUDINARY_CLOUD_NAME;
-      const uploadPreset = import.meta.env.VITE_CLOUDINARY_UPLOAD_PRESET;
-      const folder = import.meta.env.VITE_CLOUDINARY_FOLDER || '';
-
-      if (!cloudName || !uploadPreset) {
-        reject(new Error('Cloudinary is not configured. Add VITE_CLOUDINARY_CLOUD_NAME and VITE_CLOUDINARY_UPLOAD_PRESET to .env'));
-        return;
-      }
-
-      const formData = new FormData();
-      formData.append('file', file);
-      formData.append('upload_preset', uploadPreset);
-      formData.append('public_id', `admin_product_${Date.now()}`);
-      if (folder) formData.append('folder', folder);
-
-      // Use XMLHttpRequest to track upload progress
-      const xhr = new XMLHttpRequest();
-      xhr.open('POST', `https://api.cloudinary.com/v1_1/${cloudName}/image/upload`);
-
-      xhr.upload.addEventListener('progress', (e) => {
-        if (e.lengthComputable) {
-          const progress = Math.round((e.loaded / e.total) * 100);
-          setProductImageUploadProgress(progress);
-        }
-      });
-
-      xhr.onload = () => {
-        try {
-          const response = JSON.parse(xhr.responseText);
-          if (xhr.status >= 200 && xhr.status < 300 && response.secure_url) {
-            resolve(response.secure_url);
-          } else {
-            reject(new Error(response.error?.message || 'Cloudinary upload failed'));
-          }
-        } catch (e) {
-          reject(new Error('Invalid response from Cloudinary'));
-        }
-      };
-
-      xhr.onerror = () => reject(new Error('Network error during upload'));
-      xhr.send(formData);
-    });
-  };
-
-  const handleProductImageChange = async (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
-    setNewProductImageFile(file);
-    setNewProductImagePreview(URL.createObjectURL(file));
-    setProductImageUploading(true);
-    setProductImageUploadProgress(0);
-    try {
-      const url = await uploadToCloudinary(file);
-      setNewProductImageUrl(url);
-    } catch (err) {
-      alert(`Image upload failed: ${err.message}`);
-      setNewProductImageUrl('');
-    } finally {
-      setProductImageUploading(false);
-    }
-  };
-
   const handleCreateProduct = async e => {
     e.preventDefault();
     const priceNum = parseFloat(newProductPrice);
@@ -686,11 +939,10 @@ function App() {
       rating: 4.5,
       category: newProductCat || 'General',
       description: newProductDesc,
-      imageUrlName: newProductImageUrl || '',
+      imageUrlName: 'img_hero_banner',
       isFeatured: newProductFeatured,
       sellerEmail: newProductSeller || 'admin@bazaar.com',
-      extraImages: '',
-      stockQuantity: 100
+      extraImages: ''
     };
 
     if (useMockData) {
@@ -716,11 +968,6 @@ function App() {
     setNewProductCat('');
     setNewProductDesc('');
     setNewProductFeatured(false);
-    setNewProductImageFile(null);
-    setNewProductImagePreview('');
-    setNewProductImageUrl('');
-    setProductImageUploading(false);
-    setProductImageUploadProgress(0);
   };
 
   const updateOrder = async (orderId, payload) => {
@@ -732,6 +979,64 @@ function App() {
       await updateDoc(doc(db, 'orders', orderId), payload);
     } catch (e) {
       alert(`Error updating order: ${e.message}`);
+    }
+  };
+
+  const updateReturnRequest = async (orderId, requestId, payload) => {
+    const order = orders.find(o => o.orderId === orderId);
+    if (!order) {
+      alert('Order not found for this return request.');
+      return;
+    }
+
+    const updatedRequests = parseReturnRequests(order.returnRequestsJson).map(request => {
+      if (request.id !== requestId) return request;
+      const next = { ...request, ...payload, updatedAt: Date.now() };
+      if (payload.status === 'Approved' && !Number(next.approvedDate || 0)) {
+        next.approvedDate = Date.now();
+      }
+      return next;
+    });
+
+    const nextJson = JSON.stringify(updatedRequests);
+    if (useMockData) {
+      setOrders(orders.map(o => (o.orderId === orderId ? { ...o, returnRequestsJson: nextJson } : o)));
+      return;
+    }
+
+    try {
+      await updateDoc(doc(db, 'orders', orderId), { returnRequestsJson: nextJson });
+    } catch (e) {
+      alert(`Error updating return request: ${e.message}`);
+    }
+  };
+
+  const updateWithdrawalStatus = async (requestId, nextStatus) => {
+    const payload = {
+      status: nextStatus,
+      updatedAt: Date.now()
+    };
+
+    if (nextStatus === 'Pending') {
+      payload.failureReason = '';
+    }
+    if (nextStatus === 'Paid') {
+      payload.paidAt = Date.now();
+      payload.failureReason = '';
+    }
+    if (nextStatus === 'Failed') {
+      payload.failureReason = 'Rejected by admin';
+    }
+
+    if (useMockData) {
+      setWithdrawalRequests(withdrawalRequests.map(req => (req.id === requestId ? { ...req, ...payload } : req)));
+      return;
+    }
+
+    try {
+      await updateDoc(doc(db, 'withdrawal_requests', requestId), payload);
+    } catch (e) {
+      alert(`Error updating withdrawal request: ${e.message}`);
     }
   };
 
@@ -765,7 +1070,6 @@ function App() {
     const discountPercent = parseInt(newCouponDiscount, 10);
     const minOrderAmount = parseFloat(newCouponMinOrder || 0);
     const maxDiscount = parseFloat(newCouponMaxDiscount || 999999);
-
     if (!newCouponCode.trim() || Number.isNaN(discountPercent) || discountPercent <= 0 || discountPercent > 100) {
       alert('Please fill in a valid code and discount percent (1-100).');
       return;
@@ -807,76 +1111,63 @@ function App() {
     setNewCouponActive(true);
   };
 
-  const toggleBannerActive = async (id, currentStatus) => {
-    if (useMockData) {
-      setBanners(banners.map(b => (b.id === id ? { ...b, isActive: !currentStatus } : b)));
-      return;
-    }
-    try {
-      await updateDoc(doc(db, 'banners', id), { isActive: !currentStatus });
-    } catch (e) {
-      alert(`Error updating banner: ${e.message}`);
-    }
-  };
-
-  const deleteBanner = async id => {
-    if (!window.confirm(`Are you sure you want to delete this banner?`)) return;
-    if (useMockData) {
-      setBanners(banners.filter(b => b.id !== id));
-      return;
-    }
-    try {
-      await deleteDoc(doc(db, 'banners', id));
-    } catch (e) {
-      alert(`Error deleting banner: ${e.message}`);
-    }
-  };
-
-  const handleCreateBanner = async e => {
-    e.preventDefault();
-    if (!newBannerTitle.trim() || !newBannerLabel.trim()) {
-      alert('Please fill in a valid title and label.');
-      return;
-    }
-
-    const bannerId = `banner_${Date.now()}`;
-    const newBann = {
-      id: bannerId,
-      label: newBannerLabel.trim(),
-      title: newBannerTitle.trim(),
-      description: newBannerDesc.trim(),
-      targetCategory: newBannerTargetCat,
-      gradientStart: newBannerGradientStart.trim() || '#1B5E20',
-      gradientEnd: newBannerGradientEnd.trim() || '#A5D6A7',
-      sortOrder: parseInt(newBannerSortOrder, 10) || 0,
-      isActive: newBannerActive
+  const saveServiceConfig = async event => {
+    event.preventDefault();
+    const payload = {
+      ...appConfig,
+      serviceCities: serviceCitiesText.split(',').map(v => v.trim()).filter(Boolean),
+      servicePincodes: servicePincodesText.split(',').map(v => v.trim()).filter(Boolean),
+      payoutDelayHours: Number(payoutDelayHours || 0)
     };
-
     if (useMockData) {
-      setBanners([...banners, newBann]);
-      setShowBannerModal(false);
-      resetBannerForm();
+      setAppConfig(payload);
+      setDbStatusMsg('Settings saved in demo mode.');
+      setTimeout(() => setDbStatusMsg(''), 3000);
       return;
     }
-
     try {
-      await setDoc(doc(db, 'banners', bannerId), newBann);
-      setShowBannerModal(false);
-      resetBannerForm();
+      await setDoc(doc(db, 'app_config', 'main'), payload, { merge: true });
+      setDbStatusMsg('Settings saved.');
+      setTimeout(() => setDbStatusMsg(''), 3000);
     } catch (e) {
-      alert(`Error creating banner: ${e.message}`);
+      alert(`Error saving settings: ${e.message}`);
     }
   };
 
-  const resetBannerForm = () => {
-    setNewBannerLabel('');
-    setNewBannerTitle('');
-    setNewBannerDesc('');
-    setNewBannerTargetCat('All');
-    setNewBannerGradientStart('#1B5E20');
-    setNewBannerGradientEnd('#A5D6A7');
-    setNewBannerSortOrder('0');
-    setNewBannerActive(true);
+  const handleCreateCategory = async event => {
+    event.preventDefault();
+    const name = newCategoryName.trim();
+    if (!name) return;
+    const isReturnable = name.toLowerCase() === 'food' || name.toLowerCase() === 'vegetables'
+      ? false
+      : newCategoryReturnable;
+    const payload = { name, isReturnable };
+    if (useMockData) {
+      setCategories([...categories.filter(c => c.name !== name), payload].sort((a, b) => a.name.localeCompare(b.name)));
+    } else {
+      await setDoc(doc(db, 'categories', name), payload);
+    }
+    setNewCategoryName('');
+    setNewCategoryReturnable(true);
+  };
+
+  const toggleCategoryReturnable = async category => {
+    const forcedNonReturnable = ['food', 'vegetables'].includes(category.name.toLowerCase());
+    const nextValue = forcedNonReturnable ? false : !category.isReturnable;
+    if (useMockData) {
+      setCategories(categories.map(c => c.name === category.name ? { ...c, isReturnable: nextValue } : c));
+    } else {
+      await updateDoc(doc(db, 'categories', category.name), { isReturnable: nextValue });
+    }
+  };
+
+  const deleteCategory = async name => {
+    if (!window.confirm(`Delete category "${name}"?`)) return;
+    if (useMockData) {
+      setCategories(categories.filter(c => c.name !== name));
+    } else {
+      await deleteDoc(doc(db, 'categories', name));
+    }
   };
 
   if (authLoading) {
@@ -943,14 +1234,17 @@ function App() {
             ['users', UsersIcon, 'Users'],
             ['products', ShoppingBag, 'Products'],
             ['orders', FileText, 'Orders'],
+            ['returns', RefreshCw, 'Returns'],
+            ['payments', CreditCard, 'Payments'],
+            ['categories', Settings, 'Categories'],
             ['coupons', Ticket, 'Coupons'],
-            ['banners', Sparkles, 'Banners'],
-            ['settings', Settings, 'Serviceable Areas']
+            ['settings', Settings, 'Service Settings']
           ].map(([tab, Icon, label]) => (
             <button key={tab} className={`nav-item ${activeTab === tab ? 'active' : ''}`} onClick={() => setActiveTab(tab)}>
               <Icon size={20} />
               {label}
               {tab === 'users' && pendingSellersCount + pendingPartnersCount > 0 && <span className="nav-count">{pendingSellersCount + pendingPartnersCount}</span>}
+              {tab === 'returns' && pendingReturnCount > 0 && <span className="nav-count">{pendingReturnCount}</span>}
             </button>
           ))}
         </nav>
@@ -1004,540 +1298,647 @@ function App() {
               {activeTab === 'users' && 'User & Account Management'}
               {activeTab === 'products' && 'Inventory Products Catalog'}
               {activeTab === 'orders' && 'Order Transactions'}
+              {activeTab === 'returns' && 'Return Requests'}
+              {activeTab === 'payments' && 'Payment & Payout Ledger'}
+              {activeTab === 'categories' && 'Category Return Rules'}
               {activeTab === 'coupons' && 'Coupon Directory'}
-              {activeTab === 'banners' && 'Marketing Banners'}
-              {activeTab === 'settings' && 'Serviceable Area & Payout Settings'}
-            </h1>
+              {activeTab === 'settings' && 'Service Area & Payout Settings'}
+            </h1 >
             <p>
               {activeTab === 'dashboard' && 'Monitor marketplace stats, verification queues, revenue, and data tools.'}
               {activeTab === 'users' && 'Review buyers, sellers, delivery partners, admin accounts, and verification documents.'}
               {activeTab === 'products' && 'Add new items, manage featured products, and review seller inventory.'}
               {activeTab === 'orders' && 'Update workflow statuses, delivery assignment, payment details, and order flags.'}
+              {activeTab === 'returns' && 'Review customer return photos, seller approval status, delivery pickup assignment, and payout deductions.'}
+              {activeTab === 'payments' && 'Track customer payments, seller receivables, product splits, and delivery partner earnings.'}
+              {activeTab === 'categories' && 'Add seller listing categories and define whether customers can request returns.'}
               {activeTab === 'coupons' && 'Create, configure, and monitor discount promo coupons.'}
-              {activeTab === 'banners' && 'Manage rotating carousel billboard advertising banners shown in the mobile app.'}
               {activeTab === 'settings' && 'Control eligible cities, pincodes, and automatic Razorpay payout timing.'}
-            </p>
-          </div>
-        </header>
+            </p >
+          </div >
+        </header >
 
-        {loading ? (
-          <div className="empty-state">
-            <RefreshCw className="empty-state-icon" style={{ animation: 'spin 1.5s linear infinite' }} size={48} />
-            <h3>Syncing with Firebase...</h3>
-          </div>
-        ) : (
-          <>
-            {activeTab === 'dashboard' && (
-              <div>
-                <div className="metrics-grid">
-                  <Metric title="Total Revenue" value={formatCurrency(totalRevenue)} icon={CheckCircle} />
-                  <Metric title="Users" value={users.length} icon={UsersIcon} />
-                  <Metric title="Products" value={products.length} icon={ShoppingBag} />
-                  <Metric title="Orders" value={orders.length} icon={FileText} />
-                </div>
+        {
+          loading ? (
+            <div className="empty-state" >
+              <RefreshCw className="empty-state-icon" style={{ animation: 'spin 1.5s linear infinite' }} size={48} />
+              <h3>Syncing with Firebase...</h3>
+            </div>
+          ) : (
+            <>
+              {activeTab === 'dashboard' && (
+                <div>
+                  <div className="metrics-grid">
+                    <Metric title="Total Revenue" value={formatCurrency(totalRevenue)} icon={CheckCircle} />
+                    <Metric title="Users" value={users.length} icon={UsersIcon} />
+                    <Metric title="Products" value={products.length} icon={ShoppingBag} />
+                    <Metric title="Orders" value={orders.length} icon={FileText} />
+                  </div>
 
-                <div className="mini-metrics-grid">
-                  <Metric title="Buyers" value={buyerCount} icon={UsersIcon} compact />
-                  <Metric title="Sellers" value={`${activeSellersCount}/${sellerCount}`} icon={ShieldCheck} compact />
-                  <Metric title="Delivery Partners" value={partnerCount} icon={Clock} compact />
-                  <Metric title="Pending Reviews" value={pendingSellersCount + pendingPartnersCount} icon={AlertTriangle} compact />
-                </div>
+                  <div className="mini-metrics-grid">
+                    <Metric title="Buyers" value={buyerCount} icon={UsersIcon} compact />
+                    <Metric title="Sellers" value={`${activeSellersCount}/${sellerCount}`} icon={ShieldCheck} compact />
+                    <Metric title="Delivery Partners" value={partnerCount} icon={Clock} compact />
+                    <Metric title="Pending Reviews" value={pendingSellersCount + pendingPartnersCount} icon={AlertTriangle} compact />
+                  </div>
 
+                  {/*
                 <div className="glass-panel section-card data-tools">
                   <div className="section-header">
-                    <h2><Sparkles size={20} /> Database Tools</h2>
+                    <h2><Database size={20} /> Firebase Database Tools</h2>
                   </div>
-                  <p style={{fontSize:'13px', color:'var(--text-muted)', marginBottom:'12px'}}>
-                    Seed Firestore with default sample data for testing, or export/import a JSON backup.
-                  </p>
+                  <p>Seed Firestore with app-ready sample data, export a JSON backup, or restore a previous backup.</p>
                   <div className="toolbar-row">
-                    <button className="btn btn-primary" onClick={_seedFirestoreDatabase}>
+                    <button className="btn btn-primary" onClick={seedFirestoreDatabase} disabled={useMockData}>
                       <Sparkles size={16} /> Seed Default Data
                     </button>
-                    <button className="btn btn-secondary" onClick={_exportDatabaseToJson}>
-                      Export JSON
+                    <button className="btn btn-secondary" onClick={exportDatabaseToJson}>
+                      <Download size={16} /> Export JSON
                     </button>
-                    <label className="btn btn-secondary" style={{cursor:'pointer'}}>
-                      Import JSON
-                      <input type="file" onChange={_importDatabaseFromJson} accept=".json" hidden />
-                    </label>
-                  </div>
-                </div>
-
-                <div className="dashboard-grid">
-                  <RecentOrders orders={orders} setActiveTab={setActiveTab} />
-                  <div className="glass-panel section-card">
-                    <div className="section-header">
-                      <h2>Verification Queue</h2>
-                    </div>
-                    <QueueLine label="Sellers awaiting approval" value={pendingSellersCount} onClick={() => setActiveTab('users')} />
-                    <QueueLine label="Delivery partners awaiting approval" value={pendingPartnersCount} onClick={() => setActiveTab('users')} />
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {activeTab === 'users' && (
-              <div className="glass-panel section-card">
-                <div className="section-header stacked-section-header">
-                  <h2>Platform Accounts</h2>
-                  <div className="toolbar-row">
-                    <div className="search-box">
-                      <Search size={16} />
-                      <input value={userSearch} onChange={e => setUserSearch(e.target.value)} placeholder="Search accounts" />
-                    </div>
-                    <select className="form-control compact-select" value={userRoleFilter} onChange={e => setUserRoleFilter(e.target.value)}>
-                      {ROLE_FILTERS.map(role => <option key={role} value={role}>{role === 'All' ? 'All roles' : roleLabel(role)}</option>)}
-                    </select>
-                  </div>
-                </div>
-                {filteredUsers.length === 0 ? (
-                  <Empty icon={UsersIcon} title="No Users Found" text="No account matches the current filters." />
-                ) : (
-                  <div className="table-container">
-                    <table className="modern-table">
-                      <thead>
-                        <tr>
-                          <th>User Profile</th>
-                          <th>Role</th>
-                          <th>Account Details</th>
-                          <th>Verification</th>
-                          <th>Manage</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {filteredUsers.map(user => (
-                          <React.Fragment key={user.email}>
-                            <tr>
-                              <td>
-                                <div className="identity-cell">
-                                  <div className="avatar">{(user.name || user.email || 'U').substring(0, 2).toUpperCase()}</div>
-                                  <div>
-                                    <p>{user.name || 'N/A'}</p>
-                                    <span>{user.email}</span>
-                                  </div>
-                                </div>
-                              </td>
-                              <td><span className={`role-chip role-${(user.role || 'User').toLowerCase()}`}>{roleLabel(user.role)}</span></td>
-                              <td className="muted-cell">
-                                {user.role === 'Seller' && <><DetailLine label="Shop" value={user.shopName || 'N/A'} /><DetailLine label="Mobile" value={user.sellerMobile} /></>}
-                                {user.role === 'DeliveryPartner' && <><DetailLine label="Vehicle" value={`${user.deliveryVehicleType || 'Vehicle'} ${user.deliveryVehicleNumber || ''}`} /><DetailLine label="Mobile" value={user.deliveryMobile} /></>}
-                                {(!user.role || user.role === 'User' || user.role === 'Admin') && <><DetailLine label="Phone" value={user.phone} /><DetailLine label="Address" value={user.savedAddress || 'None configured'} /></>}
-                              </td>
-                              <td><UserStatus user={user} /></td>
-                              <td>
-                                <div className="actions-row">
-                                  {user.role === 'Seller' && <button className={`btn btn-sm ${user.isSellerVerified ? 'btn-secondary' : 'btn-primary'}`} onClick={() => toggleSellerVerification(user.email, user.isSellerVerified)}>{user.isSellerVerified ? 'Revoke' : 'Approve'}</button>}
-                                  {user.role === 'DeliveryPartner' && <button className={`btn btn-sm ${user.isDeliveryPartnerVerified ? 'btn-secondary' : 'btn-primary'}`} onClick={() => toggleDeliveryVerification(user.email, user.isDeliveryPartnerVerified)}>{user.isDeliveryPartnerVerified ? 'Revoke' : 'Approve'}</button>}
-                                  <button className="btn btn-secondary btn-sm" onClick={() => setExpandedUserEmail(expandedUserEmail === user.email ? '' : user.email)}>Details</button>
-                                  <button className="btn btn-danger btn-sm" onClick={() => deleteUser(user.email)}><Trash2 size={14} /></button>
-                                </div>
-                              </td>
-                            </tr>
-                            {expandedUserEmail === user.email && (
-                              <tr className="detail-row">
-                                <td colSpan="5">
-                                  <div className="detail-grid">
-                                    <DetailLine label="Saved cards" value={user.savedCards} />
-                                    <DetailLine label="Language" value={user.selectedLanguage} />
-                                    <DetailLine label="Plus member" value={user.isPlusMember ? 'Yes' : 'No'} />
-                                    <DetailLine label="Notifications" value={user.notificationsEnabled ? 'Enabled' : 'Disabled'} />
-                                    <DetailLine label="Shop address" value={user.shopAddress} />
-                                    <DetailLine label="Aadhaar" value={user.sellerAadhaar || user.deliveryAadhaar} />
-                                    <DetailLine label="Bank account" value={user.sellerBankAccount || user.deliveryBankAccount} />
-                                    <DetailLine label="PAN" value={user.sellerPanCard} />
-                                    <DetailLine label="GST" value={user.sellerGstNumber} />
-                                    <DetailLine label="Emergency contact" value={user.deliveryEmergencyContact} />
-                                    <DetailLine label="Edit request" value={user.editRequestPending ? 'Pending Approval' : 'None'} />
-                                  </div>
-
-                                  {user.sellerVideoUrl && (
-                                    <div style={{ marginTop: '16px' }}>
-                                      <p style={{ margin: '0 0 6px 0', fontSize: '12px', color: '#666', fontWeight: 'bold' }}>Seller Introduction Video:</p>
-                                      <video src={user.sellerVideoUrl} controls width="320" style={{ borderRadius: '8px', border: '1px solid #ddd' }} />
-                                    </div>
-                                  )}
-
-                                  {(user.sellerShopPhoto || user.sellerOwnerPhoto || user.deliveryPhoto) && (
-                                    <div style={{ marginTop: '16px', display: 'flex', gap: '16px', flexWrap: 'wrap' }}>
-                                      {user.sellerShopPhoto && (
-                                        <div>
-                                          <p style={{ margin: '0 0 6px 0', fontSize: '12px', color: '#666', fontWeight: 'bold' }}>Shop Image:</p>
-                                          <img src={user.sellerShopPhoto} alt="Shop" style={{ width: '120px', height: '120px', objectFit: 'cover', borderRadius: '8px', border: '1px solid #ddd' }} />
-                                        </div>
-                                      )}
-                                      {user.sellerOwnerPhoto && (
-                                        <div>
-                                          <p style={{ margin: '0 0 6px 0', fontSize: '12px', color: '#666', fontWeight: 'bold' }}>Owner Selfie/Photo:</p>
-                                          <img src={user.sellerOwnerPhoto} alt="Owner" style={{ width: '120px', height: '120px', objectFit: 'cover', borderRadius: '8px', border: '1px solid #ddd' }} />
-                                        </div>
-                                      )}
-                                      {user.deliveryPhoto && (
-                                        <div>
-                                          <p style={{ margin: '0 0 6px 0', fontSize: '12px', color: '#666', fontWeight: 'bold' }}>Delivery Partner Photo:</p>
-                                          <img src={user.deliveryPhoto} alt="Delivery Partner" style={{ width: '120px', height: '120px', objectFit: 'cover', borderRadius: '8px', border: '1px solid #ddd' }} />
-                                        </div>
-                                      )}
-                                    </div>
-                                  )}
-
-                                  {user.editRequestPending && (
-                                    <div className="edit-request-box" style={{
-                                      marginTop: '16px',
-                                      padding: '16px',
-                                      borderRadius: '12px',
-                                      background: 'rgba(232, 245, 233, 0.4)',
-                                      border: '1px solid #c8e6c9',
-                                      display: 'flex',
-                                      flexDirection: 'column',
-                                      gap: '12px'
-                                    }}>
-                                      <h4 style={{ margin: 0, color: '#2e7d32', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                                        ⏳ {user.role === 'Seller' ? 'Seller' : 'Delivery Partner'} Profile Edit Request Pending Approval
-                                      </h4>
-                                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
-                                        <div>
-                                          <p style={{ margin: '0 0 4px 0', fontSize: '12px', color: '#666', fontWeight: 'bold' }}>Current Profile Info:</p>
-                                          {user.role === 'Seller' ? (
-                                            <div style={{ fontSize: '13px' }}>
-                                              <div><strong>Owner Name:</strong> {user.name}</div>
-                                              <div><strong>Shop Name:</strong> {user.shopName}</div>
-                                              <div><strong>Shop Address:</strong> {user.shopAddress}</div>
-                                            </div>
-                                          ) : (
-                                            <div style={{ fontSize: '13px' }}>
-                                              <div><strong>Full Name:</strong> {user.name}</div>
-                                              <div><strong>Mobile:</strong> {user.deliveryMobile}</div>
-                                              <div><strong>Vehicle:</strong> {user.deliveryVehicleType} ({user.deliveryVehicleNumber})</div>
-                                              <div><strong>Emergency Contact:</strong> {user.deliveryEmergencyContact}</div>
-                                              <div><strong>Address:</strong> {user.deliveryAddress}</div>
-                                            </div>
-                                          )}
-                                        </div>
-                                        <div>
-                                          <p style={{ margin: '0 0 4px 0', fontSize: '12px', color: '#2e7d32', fontWeight: 'bold' }}>Requested Profile Updates:</p>
-                                          {user.role === 'Seller' ? (
-                                            <div style={{ fontSize: '13px', color: '#1b5e20' }}>
-                                              <div><strong>Owner Name:</strong> {user.requestedName || <span style={{ color: '#999', fontStyle: 'italic' }}>No change</span>}</div>
-                                              <div><strong>Shop Name:</strong> {user.requestedShopName || <span style={{ color: '#999', fontStyle: 'italic' }}>No change</span>}</div>
-                                              <div><strong>Shop Address:</strong> {user.requestedShopAddress || <span style={{ color: '#999', fontStyle: 'italic' }}>No change</span>}</div>
-                                            </div>
-                                          ) : (
-                                            <div style={{ fontSize: '13px', color: '#1b5e20' }}>
-                                              <div><strong>Full Name:</strong> {user.requestedName || <span style={{ color: '#999', fontStyle: 'italic' }}>No change</span>}</div>
-                                              <div><strong>Mobile:</strong> {user.requestedDeliveryMobile || <span style={{ color: '#999', fontStyle: 'italic' }}>No change</span>}</div>
-                                              <div><strong>Vehicle:</strong> {user.requestedDeliveryVehicleType ? `${user.requestedDeliveryVehicleType} (${user.requestedDeliveryVehicleNumber || 'N/A'})` : <span style={{ color: '#999', fontStyle: 'italic' }}>No change</span>}</div>
-                                              <div><strong>Emergency Contact:</strong> {user.requestedDeliveryEmergencyContact || <span style={{ color: '#999', fontStyle: 'italic' }}>No change</span>}</div>
-                                              <div><strong>Address:</strong> {user.requestedDeliveryAddress || <span style={{ color: '#999', fontStyle: 'italic' }}>No change</span>}</div>
-                                            </div>
-                                          )}
-                                        </div>
-                                      </div>
-                                      <div style={{ display: 'flex', gap: '8px', marginTop: '4px' }}>
-                                        <button className="btn btn-primary btn-sm" onClick={() => approveProfileEditRequest(user.email, user)}>
-                                          Approve Profile Changes
-                                        </button>
-                                        <button className="btn btn-secondary btn-sm" onClick={() => rejectProfileEditRequest(user.email)}>
-                                          Decline Profile Changes
-                                        </button>
-                                      </div>
-                                    </div>
-                                  )}
-                                </td>
-                              </tr>
-                            )}
-                          </React.Fragment>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-              </div>
-            )}
-
-            {activeTab === 'products' && (
-              <ProductsTab
-                products={products}
-                setShowProductModal={setShowProductModal}
-                toggleProductFeatured={toggleProductFeatured}
-                deleteProduct={deleteProduct}
-              />
-            )}
-
-            {activeTab === 'orders' && (
-              <div className="glass-panel section-card">
-                <div className="section-header stacked-section-header">
-                  <h2>Order Ledger</h2>
-                  <div className="toolbar-row">
-                    <div className="search-box">
-                      <Search size={16} />
-                      <input value={orderSearch} onChange={e => setOrderSearch(e.target.value)} placeholder="Search orders" />
-                    </div>
-                    <select className="form-control compact-select" value={orderStatusFilter} onChange={e => setOrderStatusFilter(e.target.value)}>
-                      <option value="All">All statuses</option>
-                      {ORDER_STATUSES.map(status => <option key={status} value={status}>{status}</option>)}
-                    </select>
-                  </div>
-                </div>
-
-                {filteredOrders.length === 0 ? (
-                  <Empty icon={FileText} title="No Orders Found" text="No order matches the current filters." />
-                ) : (
-                  <div className="table-container">
-                    <table className="modern-table">
-                      <thead>
-                        <tr>
-                          <th>Order</th>
-                          <th>Customer</th>
-                          <th>Items</th>
-                          <th>Payment</th>
-                          <th>Status</th>
-                          <th>Actions</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {filteredOrders.map(order => (
-                          <React.Fragment key={order.orderId}>
-                            <tr>
-                              <td>
-                                <p className="accent-text">{order.orderId}</p>
-                                <span className="table-subtext">{new Date(Number(order.orderDate || 0)).toLocaleString()}</span>
-                              </td>
-                              <td>
-                                <p>{order.email}</p>
-                                <span className="table-subtext clamp">{order.deliveryAddress || 'No delivery address'}</span>
-                              </td>
-                              <td>
-                                <p className="clamp">{order.itemsSummary}</p>
-                                {order.couponApplied && <span className="status-badge verified">{order.couponApplied}</span>}
-                              </td>
-                              <td>
-                                <p>{formatCurrency(order.totalAmount)}</p>
-                                <span className="table-subtext">{order.paymentMode || 'COD'}</span>
-                              </td>
-                              <td>
-                                <span className={`status-badge ${statusClass(order.status)}`}>{order.status || 'Pending'}</span>
-                              </td>
-                              <td>
-                                <div className="actions-row">
-                                  <select className="form-control compact-select" value={order.status || 'Pending'} onChange={e => updateOrder(order.orderId, { status: e.target.value })}>
-                                    {ORDER_STATUSES.map(status => <option key={status} value={status}>{status}</option>)}
-                                  </select>
-                                  <button className="btn btn-secondary btn-sm" onClick={() => setExpandedOrderId(expandedOrderId === order.orderId ? '' : order.orderId)}>Details</button>
-                                </div>
-                              </td>
-                            </tr>
-                            {expandedOrderId === order.orderId && (
-                              <tr className="detail-row">
-                                <td colSpan="6">
-                                  <div className="detail-grid">
-                                    <DetailLine label="Delivery partner" value={order.deliveryPartnerEmail || 'Not assigned'} />
-                                    <DetailLine label="Delivery status" value={order.deliveryStatus || 'Not started'} />
-                                    <DetailLine label="Seller confirmed" value={order.sellerConfirmed ? 'Yes' : 'No'} />
-                                    <DetailLine label="Seller reject requested" value={order.sellerRejectRequested ? 'Yes' : 'No'} />
-                                    <DetailLine label="Change delivery partner requested" value={order.sellerChangeDeliveryBoyRequested ? 'Yes' : 'No'} />
-                                    <DetailLine label="Full address" value={order.deliveryAddress} />
-                                  </div>
-                                  <div className="toolbar-row detail-actions">
-                                    <button className="btn btn-secondary btn-sm" onClick={() => updateOrder(order.orderId, { status: 'Shipped', deliveryStatus: 'On the Way' })}>Ship</button>
-                                    <button className="btn btn-primary btn-sm" onClick={() => updateOrder(order.orderId, { status: 'Delivered', deliveryStatus: 'Delivered' })}>Deliver</button>
-                                    <button className="btn btn-danger btn-sm" onClick={() => updateOrder(order.orderId, { status: 'Cancelled' })}>Cancel</button>
-                                  </div>
-                                </td>
-                              </tr>
-                            )}
-                          </React.Fragment>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-              </div>
-            )}
-
-            {activeTab === 'coupons' && (
-              <div className="glass-panel section-card">
-                <div className="section-header stacked-section-header">
-                  <h2>Coupon Directory</h2>
-                  <div className="toolbar-row">
-                    <button className="btn btn-primary" onClick={() => setShowCouponModal(true)}>
-                      <Plus size={16} /> Create Coupon
+                    <button className="btn btn-secondary" onClick={() => fileInputRef.current.click()} disabled={useMockData}>
+                      <Upload size={16} /> Import JSON
                     </button>
+                    <input type="file" ref={fileInputRef} onChange={importDatabaseFromJson} accept=".json" hidden />
                   </div>
                 </div>
+                */}
 
-                {coupons.length === 0 ? (
-                  <Empty icon={Ticket} title="No Coupons Found" text="Create coupons to offer discounts on checkout." />
-                ) : (
-                  <div className="table-container">
-                    <table className="modern-table">
-                      <thead>
-                        <tr>
-                          <th>Code</th>
-                          <th>Discount</th>
-                          <th>Min Order</th>
-                          <th>Max Discount</th>
-                          <th>Description</th>
-                          <th>Status</th>
-                          <th>Actions</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {coupons.map(coupon => (
-                          <tr key={coupon.code}>
-                            <td>
-                              <p className="accent-text" style={{ fontWeight: 'bold' }}>{coupon.code}</p>
-                            </td>
-                            <td>
-                              <p>{coupon.discountPercent}% OFF</p>
-                            </td>
-                            <td>
-                              <p>₹{coupon.minOrderAmount || 0}</p>
-                            </td>
-                            <td>
-                              <p>{coupon.maxDiscount && coupon.maxDiscount < 999999 ? `₹${coupon.maxDiscount}` : 'Unlimited'}</p>
-                            </td>
-                            <td className="muted-cell">
-                              <p>{coupon.description || 'No description provided'}</p>
-                            </td>
-                            <td>
-                              <span className={`status-badge ${coupon.isActive ? 'verified' : 'rejected'}`}>
-                                {coupon.isActive ? 'Active' : 'Inactive'}
-                              </span>
-                            </td>
-                            <td>
-                              <div className="actions-row">
-                                <button className={`btn btn-sm ${coupon.isActive ? 'btn-secondary' : 'btn-primary'}`} onClick={() => toggleCouponActive(coupon.code, coupon.isActive)}>
-                                  {coupon.isActive ? 'Deactivate' : 'Activate'}
-                                </button>
-                                <button className="btn btn-danger btn-sm" onClick={() => deleteCoupon(coupon.code)}>
-                                  <Trash2 size={14} />
-                                </button>
-                              </div>
-                            </td>
+                  <div className="dashboard-grid">
+                    <RecentOrders orders={orders} setActiveTab={setActiveTab} />
+                    <div className="glass-panel section-card">
+                      <div className="section-header">
+                        <h2>Verification Queue</h2>
+                      </div>
+                      <QueueLine label="Sellers awaiting approval" value={pendingSellersCount} onClick={() => setActiveTab('users')} />
+                      <QueueLine label="Delivery partners awaiting approval" value={pendingPartnersCount} onClick={() => setActiveTab('users')} />
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {activeTab === 'users' && (
+                <div className="glass-panel section-card">
+                  <div className="section-header stacked-section-header">
+                    <h2>Platform Accounts</h2>
+                    <div className="toolbar-row">
+                      <div className="search-box">
+                        <Search size={16} />
+                        <input value={userSearch} onChange={e => setUserSearch(e.target.value)} placeholder="Search accounts" />
+                      </div>
+                      <select className="form-control compact-select" value={userRoleFilter} onChange={e => setUserRoleFilter(e.target.value)}>
+                        {ROLE_FILTERS.map(role => <option key={role} value={role}>{role === 'All' ? 'All roles' : roleLabel(role)}</option>)}
+                      </select>
+                    </div>
+                  </div>
+                  {filteredUsers.length === 0 ? (
+                    <Empty icon={UsersIcon} title="No Users Found" text="No account matches the current filters." />
+                  ) : (
+                    <div className="table-container">
+                      <table className="modern-table">
+                        <thead>
+                          <tr>
+                            <th>User Profile</th>
+                            <th>Role</th>
+                            <th>Account Details</th>
+                            <th>Verification</th>
+                            <th>Manage</th>
                           </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-              </div>
-            )}
+                        </thead>
+                        <tbody>
+                          {filteredUsers.map(user => (
+                            <React.Fragment key={user.email}>
+                              <tr>
+                                <td>
+                                  <div className="identity-cell">
+                                    <div className="avatar">{(user.name || user.email || 'U').substring(0, 2).toUpperCase()}</div>
+                                    <div>
+                                      <p>{user.name || 'N/A'}</p>
+                                      <span>{user.email}</span>
+                                    </div>
+                                  </div>
+                                </td>
+                                <td><span className={`role-chip role-${(user.role || 'User').toLowerCase()}`}>{roleLabel(user.role)}</span></td>
+                                <td className="muted-cell">
+                                  {user.role === 'Seller' && <><DetailLine label="Shop" value={user.shopName || 'N/A'} /><DetailLine label="Mobile" value={user.sellerMobile} /></>}
+                                  {user.role === 'DeliveryPartner' && <><DetailLine label="Vehicle" value={`${user.deliveryVehicleType || 'Vehicle'} ${user.deliveryVehicleNumber || ''}`} /><DetailLine label="Mobile" value={user.deliveryMobile} /></>}
+                                  {(!user.role || user.role === 'User' || user.role === 'Admin') && <><DetailLine label="Phone" value={user.phone} /><DetailLine label="Address" value={user.savedAddress || 'None configured'} /></>}
+                                </td>
+                                <td><UserStatus user={user} /></td>
+                                <td>
+                                  <div className="actions-row">
+                                    {user.role === 'Seller' && <button className={`btn btn-sm ${user.isSellerVerified ? 'btn-secondary' : 'btn-primary'}`} onClick={() => toggleSellerVerification(user.email, user.isSellerVerified)}>{user.isSellerVerified ? 'Revoke' : 'Approve'}</button>}
+                                    {user.role === 'DeliveryPartner' && <button className={`btn btn-sm ${user.isDeliveryPartnerVerified ? 'btn-secondary' : 'btn-primary'}`} onClick={() => toggleDeliveryVerification(user.email, user.isDeliveryPartnerVerified)}>{user.isDeliveryPartnerVerified ? 'Revoke' : 'Approve'}</button>}
+                                    <button className="btn btn-secondary btn-sm" onClick={() => setExpandedUserEmail(expandedUserEmail === user.email ? '' : user.email)}>Details</button>
+                                    <button className="btn btn-danger btn-sm" onClick={() => deleteUser(user.email)}><Trash2 size={14} /></button>
+                                  </div>
+                                </td>
+                              </tr>
+                              {expandedUserEmail === user.email && (
+                                <tr className="detail-row">
+                                  <td colSpan="5">
+                                    <div className="detail-grid">
+                                      <DetailLine label="Saved cards" value={user.savedCards} />
+                                      <DetailLine label="Language" value={user.selectedLanguage} />
+                                      <DetailLine label="Plus member" value={user.isPlusMember ? 'Yes' : 'No'} />
+                                      <DetailLine label="Notifications" value={user.notificationsEnabled ? 'Enabled' : 'Disabled'} />
+                                      <DetailLine label="Shop address" value={user.shopAddress} />
+                                      <DetailLine label="Aadhaar" value={user.sellerAadhaar || user.deliveryAadhaar} />
+                                      <DetailLine label="Bank account" value={user.sellerBankAccount || user.deliveryBankAccount} />
+                                      <DetailLine label="PAN" value={user.sellerPanCard} />
+                                      <DetailLine label="GST" value={user.sellerGstNumber} />
+                                      <DetailLine label="Emergency contact" value={user.deliveryEmergencyContact} />
+                                      <DetailLine label="Edit request" value={user.editRequestPending ? 'Pending Approval' : 'None'} />
+                                    </div>
 
-            {activeTab === 'banners' && (
-              <div className="glass-panel section-card">
-                <div className="section-header stacked-section-header">
-                  <h2>Banner Directory</h2>
-                  <div className="toolbar-row">
-                    <button className="btn btn-primary" onClick={() => setShowBannerModal(true)}>
-                      <Plus size={16} /> Create Banner
-                    </button>
-                  </div>
+                                    {user.sellerVideoUrl && (
+                                      <div style={{ marginTop: '16px' }}>
+                                        <p style={{ margin: '0 0 6px 0', fontSize: '12px', color: '#666', fontWeight: 'bold' }}>Seller Introduction Video:</p>
+                                        <video src={user.sellerVideoUrl} controls width="320" style={{ borderRadius: '8px', border: '1px solid #ddd' }} />
+                                      </div>
+                                    )}
+
+                                    {(user.sellerShopPhoto || user.sellerOwnerPhoto || user.deliveryPhoto) && (
+                                      <div style={{ marginTop: '16px', display: 'flex', gap: '16px', flexWrap: 'wrap' }}>
+                                        {user.sellerShopPhoto && (
+                                          <div>
+                                            <p style={{ margin: '0 0 6px 0', fontSize: '12px', color: '#666', fontWeight: 'bold' }}>Shop Image:</p>
+                                            <img src={user.sellerShopPhoto} alt="Shop" style={{ width: '120px', height: '120px', objectFit: 'cover', borderRadius: '8px', border: '1px solid #ddd' }} />
+                                          </div>
+                                        )}
+                                        {user.sellerOwnerPhoto && (
+                                          <div>
+                                            <p style={{ margin: '0 0 6px 0', fontSize: '12px', color: '#666', fontWeight: 'bold' }}>Owner Selfie/Photo:</p>
+                                            <img src={user.sellerOwnerPhoto} alt="Owner" style={{ width: '120px', height: '120px', objectFit: 'cover', borderRadius: '8px', border: '1px solid #ddd' }} />
+                                          </div>
+                                        )}
+                                        {user.deliveryPhoto && (
+                                          <div>
+                                            <p style={{ margin: '0 0 6px 0', fontSize: '12px', color: '#666', fontWeight: 'bold' }}>Delivery Partner Photo:</p>
+                                            <img src={user.deliveryPhoto} alt="Delivery Partner" style={{ width: '120px', height: '120px', objectFit: 'cover', borderRadius: '8px', border: '1px solid #ddd' }} />
+                                          </div>
+                                        )}
+                                      </div>
+                                    )}
+
+                                    {user.editRequestPending && (
+                                      <div className="edit-request-box" style={{
+                                        marginTop: '16px',
+                                        padding: '16px',
+                                        borderRadius: '12px',
+                                        background: 'rgba(232, 245, 233, 0.4)',
+                                        border: '1px solid #c8e6c9',
+                                        display: 'flex',
+                                        flexDirection: 'column',
+                                        gap: '12px'
+                                      }}>
+                                        <h4 style={{ margin: 0, color: '#2e7d32', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                          ⏳ {user.role === 'Seller' ? 'Seller' : 'Delivery Partner'} Profile Edit Request Pending Approval
+                                        </h4>
+                                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+                                          <div>
+                                            <p style={{ margin: '0 0 4px 0', fontSize: '12px', color: '#666', fontWeight: 'bold' }}>Current Profile Info:</p>
+                                            {user.role === 'Seller' ? (
+                                              <div style={{ fontSize: '13px' }}>
+                                                <div><strong>Owner Name:</strong> {user.name}</div>
+                                                <div><strong>Shop Name:</strong> {user.shopName}</div>
+                                                <div><strong>Shop Address:</strong> {user.shopAddress}</div>
+                                              </div>
+                                            ) : (
+                                              <div style={{ fontSize: '13px' }}>
+                                                <div><strong>Full Name:</strong> {user.name}</div>
+                                                <div><strong>Mobile:</strong> {user.deliveryMobile}</div>
+                                                <div><strong>Vehicle:</strong> {user.deliveryVehicleType} ({user.deliveryVehicleNumber})</div>
+                                                <div><strong>Emergency Contact:</strong> {user.deliveryEmergencyContact}</div>
+                                                <div><strong>Address:</strong> {user.deliveryAddress}</div>
+                                              </div>
+                                            )}
+                                          </div>
+                                          <div>
+                                            <p style={{ margin: '0 0 4px 0', fontSize: '12px', color: '#2e7d32', fontWeight: 'bold' }}>Requested Profile Updates:</p>
+                                            {user.role === 'Seller' ? (
+                                              <div style={{ fontSize: '13px', color: '#1b5e20' }}>
+                                                <div><strong>Owner Name:</strong> {user.requestedName || <span style={{ color: '#999', fontStyle: 'italic' }}>No change</span>}</div>
+                                                <div><strong>Shop Name:</strong> {user.requestedShopName || <span style={{ color: '#999', fontStyle: 'italic' }}>No change</span>}</div>
+                                                <div><strong>Shop Address:</strong> {user.requestedShopAddress || <span style={{ color: '#999', fontStyle: 'italic' }}>No change</span>}</div>
+                                              </div>
+                                            ) : (
+                                              <div style={{ fontSize: '13px', color: '#1b5e20' }}>
+                                                <div><strong>Full Name:</strong> {user.requestedName || <span style={{ color: '#999', fontStyle: 'italic' }}>No change</span>}</div>
+                                                <div><strong>Mobile:</strong> {user.requestedDeliveryMobile || <span style={{ color: '#999', fontStyle: 'italic' }}>No change</span>}</div>
+                                                <div><strong>Vehicle:</strong> {user.requestedDeliveryVehicleType ? `${user.requestedDeliveryVehicleType} (${user.requestedDeliveryVehicleNumber || 'N/A'})` : <span style={{ color: '#999', fontStyle: 'italic' }}>No change</span>}</div>
+                                                <div><strong>Emergency Contact:</strong> {user.requestedDeliveryEmergencyContact || <span style={{ color: '#999', fontStyle: 'italic' }}>No change</span>}</div>
+                                                <div><strong>Address:</strong> {user.requestedDeliveryAddress || <span style={{ color: '#999', fontStyle: 'italic' }}>No change</span>}</div>
+                                              </div>
+                                            )}
+                                          </div>
+                                        </div>
+                                        <div style={{ display: 'flex', gap: '8px', marginTop: '4px' }}>
+                                          <button className="btn btn-primary btn-sm" onClick={() => approveProfileEditRequest(user.email, user)}>
+                                            Approve Profile Changes
+                                          </button>
+                                          <button className="btn btn-secondary btn-sm" onClick={() => rejectProfileEditRequest(user.email)}>
+                                            Decline Profile Changes
+                                          </button>
+                                        </div>
+                                      </div>
+                                    )}
+                                  </td>
+                                </tr>
+                              )}
+                            </React.Fragment>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
                 </div>
+              )}
 
-                {banners.length === 0 ? (
-                  <Empty icon={Sparkles} title="No Banners Found" text="Create billboard banners to advertise products, category discounts, and special launch events on the mobile app home screen." />
-                ) : (
-                  <div className="table-container">
-                    <table className="modern-table">
-                      <thead>
-                        <tr>
-                          <th>Preview</th>
-                          <th>Label</th>
-                          <th>Title</th>
-                          <th>Description</th>
-                          <th>Target Category</th>
-                          <th>Sort Order</th>
-                          <th>Status</th>
-                          <th>Actions</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {banners.map(banner => {
-                          const bgGradient = `linear-gradient(135deg, ${banner.gradientStart || '#1B5E20'}, ${banner.gradientEnd || '#A5D6A7'})`;
-                          return (
-                            <tr key={banner.id}>
-                              <td>
-                                <div style={{
-                                  width: '120px',
-                                  height: '60px',
-                                  background: bgGradient,
-                                  borderRadius: '8px',
-                                  display: 'flex',
-                                  flexDirection: 'column',
-                                  justifyContent: 'center',
-                                  padding: '8px',
-                                  boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
-                                  color: '#ffffff',
-                                  overflow: 'hidden'
-                                }}>
-                                  <span style={{ fontSize: '7px', background: '#FFD700', color: '#000000', fontWeight: '900', padding: '1px 3px', borderRadius: '3px', alignSelf: 'flex-start' }}>{banner.label}</span>
-                                  <span style={{ fontSize: '9px', fontWeight: 'bold', marginTop: '2px', whiteSpace: 'nowrap', textOverflow: 'ellipsis', overflow: 'hidden' }}>{banner.title}</span>
-                                </div>
-                              </td>
-                              <td>
-                                <p className="accent-text" style={{ fontWeight: 'bold' }}>{banner.label}</p>
-                              </td>
-                              <td>
-                                <p style={{ fontWeight: '600' }}>{banner.title}</p>
-                              </td>
-                              <td className="muted-cell">
-                                <p>{banner.description || 'No description'}</p>
-                              </td>
-                              <td>
-                                <span style={{ textTransform: 'capitalize', fontWeight: 'bold', fontSize: '12px' }}>{banner.targetCategory || 'All'}</span>
-                              </td>
-                              <td>
-                                <p>{banner.sortOrder || 0}</p>
-                              </td>
-                              <td>
-                                <span className={`status-badge ${banner.isActive ? 'verified' : 'rejected'}`}>
-                                  {banner.isActive ? 'Active' : 'Inactive'}
-                                </span>
-                              </td>
-                              <td>
-                                <div className="actions-row">
-                                  <button className={`btn btn-sm ${banner.isActive ? 'btn-secondary' : 'btn-primary'}`} onClick={() => toggleBannerActive(banner.id, banner.isActive)}>
-                                    {banner.isActive ? 'Deactivate' : 'Activate'}
-                                  </button>
-                                  <button className="btn btn-danger btn-sm" onClick={() => deleteBanner(banner.id)}>
-                                    <Trash2 size={14} />
-                                  </button>
-                                </div>
-                              </td>
+              {activeTab === 'products' && (
+                <ProductsTab
+                  products={products}
+                  setShowProductModal={setShowProductModal}
+                  toggleProductFeatured={toggleProductFeatured}
+                  deleteProduct={deleteProduct}
+                />
+              )}
+
+              {activeTab === 'orders' && (
+                <div className="glass-panel section-card">
+                  <div className="section-header stacked-section-header">
+                    <h2>Order Ledger</h2>
+                    <div className="toolbar-row">
+                      <div className="search-box">
+                        <Search size={16} />
+                        <input value={orderSearch} onChange={e => setOrderSearch(e.target.value)} placeholder="Search orders" />
+                      </div>
+                      <select className="form-control compact-select" value={orderStatusFilter} onChange={e => setOrderStatusFilter(e.target.value)}>
+                        <option value="All">All statuses</option>
+                        {ORDER_STATUSES.map(status => <option key={status} value={status}>{status}</option>)}
+                      </select>
+                    </div>
+                  </div>
+
+                  {filteredOrders.length === 0 ? (
+                    <Empty icon={FileText} title="No Orders Found" text="No order matches the current filters." />
+                  ) : (
+                    <div className="table-container">
+                      <table className="modern-table">
+                        <thead>
+                          <tr>
+                            <th>Order</th>
+                            <th>Customer</th>
+                            <th>Items</th>
+                            <th>Payment</th>
+                            <th>Status</th>
+                            <th>Actions</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {filteredOrders.map(order => (
+                            <React.Fragment key={order.orderId}>
+                              <tr>
+                                <td>
+                                  <p className="accent-text">{order.orderId}</p>
+                                  <span className="table-subtext">{new Date(Number(order.orderDate || 0)).toLocaleString()}</span>
+                                </td>
+                                <td>
+                                  <p>{order.email}</p>
+                                  <span className="table-subtext clamp">{order.deliveryAddress || 'No delivery address'}</span>
+                                </td>
+                                <td>
+                                  <p className="clamp">{order.itemsSummary}</p>
+                                  {order.couponApplied && <span className="status-badge verified">{order.couponApplied}</span>}
+                                </td>
+                                <td>
+                                  <p>{formatCurrency(order.totalAmount)}</p>
+                                  <span className="table-subtext">{order.paymentMode || 'COD'}</span>
+                                </td>
+                                <td>
+                                  <span className={`status-badge ${statusClass(order.status)}`}>{order.status || 'Pending'}</span>
+                                </td>
+                                <td>
+                                  <div className="actions-row">
+                                    <select className="form-control compact-select" value={order.status || 'Pending'} onChange={e => updateOrder(order.orderId, { status: e.target.value })}>
+                                      {ORDER_STATUSES.map(status => <option key={status} value={status}>{status}</option>)}
+                                    </select>
+                                    <button className="btn btn-secondary btn-sm" onClick={() => setExpandedOrderId(expandedOrderId === order.orderId ? '' : order.orderId)}>Details</button>
+                                  </div>
+                                </td>
+                              </tr>
+                              {expandedOrderId === order.orderId && (
+                                <tr className="detail-row">
+                                  <td colSpan="6">
+                                    <div className="detail-grid">
+                                      <DetailLine label="Delivery partner" value={order.deliveryPartnerEmail || 'Not assigned'} />
+                                      <DetailLine label="Delivery status" value={order.deliveryStatus || 'Not started'} />
+                                      <DetailLine label="Seller confirmed" value={order.sellerConfirmed ? 'Yes' : 'No'} />
+                                      <DetailLine label="Seller reject requested" value={order.sellerRejectRequested ? 'Yes' : 'No'} />
+                                      <DetailLine label="Change delivery partner requested" value={order.sellerChangeDeliveryBoyRequested ? 'Yes' : 'No'} />
+                                      <DetailLine label="Full address" value={order.deliveryAddress} />
+                                    </div>
+                                    <div className="toolbar-row detail-actions">
+                                      <button className="btn btn-secondary btn-sm" onClick={() => updateOrder(order.orderId, { status: 'Shipped', deliveryStatus: 'On the Way' })}>Ship</button>
+                                      <button className="btn btn-primary btn-sm" onClick={() => updateOrder(order.orderId, { status: 'Delivered', deliveryStatus: 'Delivered' })}>Deliver</button>
+                                      <button className="btn btn-danger btn-sm" onClick={() => updateOrder(order.orderId, { status: 'Cancelled' })}>Cancel</button>
+                                    </div>
+                                  </td>
+                                </tr>
+                              )}
+                            </React.Fragment>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {
+                activeTab === 'returns' && (
+                  <div className="glass-panel section-card">
+                    <div className="section-header stacked-section-header">
+                      <h2>Return Request Ledger</h2>
+                      <div className="toolbar-row">
+                        <div className="search-box">
+                          <Search size={16} />
+                          <input value={returnSearch} onChange={e => setReturnSearch(e.target.value)} placeholder="Search returns" />
+                        </div>
+                        <select className="form-control compact-select" value={returnStatusFilter} onChange={e => setReturnStatusFilter(e.target.value)}>
+                          <option value="All">All statuses</option>
+                          {['Pending', 'Approved', 'Pickup Accepted', 'Completed', 'Rejected'].map(status => <option key={status} value={status}>{status}</option>)}
+                        </select>
+                      </div>
+                    </div>
+
+                    {filteredReturnRows.length === 0 ? (
+                      <Empty icon={RefreshCw} title="No Return Requests" text="Customer return requests will appear here after users submit them from the app." />
+                    ) : (
+                      <div className="table-container settlement-table-container">
+                        <table className="modern-table return-table">
+                          <thead>
+                            <tr>
+                              <th>Return</th>
+                              <th>Customer & Product</th>
+                              <th>Seller Debit</th>
+                              <th>Delivery Pickup</th>
+                              <th>Status</th>
+                              <th>Actions</th>
                             </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
+                          </thead>
+                          <tbody>
+                            {filteredReturnRows.map(request => (
+                              <tr key={`${request.orderId}-${request.id}`}>
+                                <td>
+                                  <p className="accent-text">{request.id || 'Return Request'}</p>
+                                  <span className="table-subtext">Order: {request.orderId}</span>
+                                  <span className="table-subtext block-text">{request.requestDate ? new Date(Number(request.requestDate)).toLocaleString() : 'No request date'}</span>
+                                  {request.photoUrl && (
+                                    <a className="table-subtext block-text" href={request.photoUrl} target="_blank" rel="noreferrer">View customer photo</a>
+                                  )}
+                                </td>
+                                <td>
+                                  <p>{request.productName}</p>
+                                  <span className="table-subtext">Customer: {request.customerName}</span>
+                                  <span className="table-subtext block-text">{request.customerEmail}</span>
+                                  <span className="table-subtext block-text">Reason: {request.reason || 'No reason provided'}</span>
+                                </td>
+                                <td>
+                                  <p>{request.sellerName}</p>
+                                  <span className="table-subtext block-text">{request.sellerEmail || 'System Store'}</span>
+                                  <span className="table-subtext">Refund: {formatCurrency(request.returnAmount)}</span>
+                                  <span className="table-subtext block-text">Return delivery: {formatCurrency(request.deliveryFee)}</span>
+                                  <span className="table-subtext block-text payout-amount">Total debit: {formatCurrency(request.debitAmount)}</span>
+                                </td>
+                                <td>
+                                  <p>{request.deliveryPartnerName}</p>
+                                  <span className="table-subtext block-text">{request.deliveryPartnerEmail || 'Delivery boy not accepted yet'}</span>
+                                  <span className="table-subtext block-text">Pickup: {request.order.deliveryAddress || 'Customer address missing'}</span>
+                                </td>
+                                <td>
+                                  <span className={`status-badge ${statusClass(request.status)}`}>{request.status || 'Pending'}</span>
+                                  {request.approvedDate > 0 && <span className="table-subtext block-text">Approved: {new Date(Number(request.approvedDate)).toLocaleString()}</span>}
+                                </td>
+                                <td>
+                                  <div className="actions-row">
+                                    <button className="btn btn-primary btn-sm" onClick={() => updateReturnRequest(request.orderId, request.id, { status: 'Approved' })}>
+                                      Approve
+                                    </button>
+                                    <button className="btn btn-secondary btn-sm" onClick={() => updateReturnRequest(request.orderId, request.id, { status: 'Pending', deliveryPartnerEmail: '' })}>
+                                      Pending
+                                    </button>
+                                    <button className="btn btn-secondary btn-sm" onClick={() => updateReturnRequest(request.orderId, request.id, { status: 'Completed' })}>
+                                      Complete
+                                    </button>
+                                    <button className="btn btn-danger btn-sm" onClick={() => updateReturnRequest(request.orderId, request.id, { status: 'Rejected', deliveryPartnerEmail: '' })}>
+                                      Reject
+                                    </button>
+                                  </div>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
                   </div>
-                )}
-              </div>
-            )}
+                )
+              }
 
-            {activeTab === 'settings' && (
-              <div className="glass-panel section-card">
-                <div className="section-header"><h2>Fulfilment Configuration</h2></div>
-                <form className="form-grid" onSubmit={saveServiceConfig}>
-                  <div className="form-group full-width">
-                    <label className="form-label">Service Cities (comma-separated)</label>
-                    <input className="form-control" value={serviceCitiesText} onChange={e => setServiceCitiesText(e.target.value)} placeholder="Delhi, Noida" />
+              {
+                activeTab === 'payments' && (
+                  <PaymentsTab
+                    entries={settlementEntries}
+                    totals={settlementTotals}
+                    payoutAccounts={payoutAccounts}
+                    withdrawalRequests={withdrawalRequests}
+                    onUpdateWithdrawalStatus={updateWithdrawalStatus}
+                    users={users}
+                  />
+                )
+              }
+
+              {
+                activeTab === 'categories' && (
+                  <div className="glass-panel section-card">
+                    <div className="section-header stacked-section-header">
+                      <h2>Category Return Controls</h2>
+                    </div>
+
+                    <form className="form-grid" onSubmit={handleCreateCategory}>
+                      <div className="form-group">
+                        <label className="form-label">Category Name</label>
+                        <input
+                          className="form-control"
+                          value={newCategoryName}
+                          onChange={e => setNewCategoryName(e.target.value)}
+                          placeholder="e.g. Electronics, Food, Vegetables"
+                          required
+                        />
+                      </div>
+                      <div className="form-group checkbox-row">
+                        <input
+                          type="checkbox"
+                          id="category-returnable"
+                          checked={newCategoryReturnable}
+                          onChange={e => setNewCategoryReturnable(e.target.checked)}
+                          disabled={['food', 'vegetables'].includes(newCategoryName.trim().toLowerCase())}
+                        />
+                        <label htmlFor="category-returnable">
+                          Returnable category
+                        </label>
+                      </div>
+                      <div className="form-actions">
+                        <button className="btn btn-primary" type="submit">
+                          <Plus size={16} /> Save Category
+                        </button>
+                      </div>
+                    </form>
+
+                    {categories.length === 0 ? (
+                      <Empty icon={Settings} title="No Categories Found" text="Add categories so sellers can select them during product listing." />
+                    ) : (
+                      <div className="table-container">
+                        <table className="modern-table">
+                          <thead>
+                            <tr>
+                              <th>Category</th>
+                              <th>Return Rule</th>
+                              <th>Manage</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {categories.map(category => {
+                              const locked = ['food', 'vegetables'].includes(category.name.toLowerCase());
+                              return (
+                                <tr key={category.name}>
+                                  <td>
+                                    <p className="accent-text">{category.name}</p>
+                                    {locked && <span className="table-subtext">Always non-returnable</span>}
+                                  </td>
+                                  <td>
+                                    <span className={`status-badge ${category.isReturnable ? 'verified' : 'rejected'}`}>
+                                      {category.isReturnable ? 'Returnable' : 'Non-returnable'}
+                                    </span>
+                                  </td>
+                                  <td>
+                                    <div className="actions-row">
+                                      <button className="btn btn-secondary btn-sm" onClick={() => toggleCategoryReturnable(category)} disabled={locked}>
+                                        {category.isReturnable ? 'Mark Non-returnable' : 'Mark Returnable'}
+                                      </button>
+                                      <button className="btn btn-danger btn-sm" onClick={() => deleteCategory(category.name)}>
+                                        <Trash2 size={14} />
+                                      </button>
+                                    </div>
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
                   </div>
-                  <div className="form-group full-width">
-                    <label className="form-label">Service Pincodes (comma-separated)</label>
-                    <input className="form-control" value={servicePincodesText} onChange={e => setServicePincodesText(e.target.value)} placeholder="110001, 201301" />
+                )
+              }
+
+              {
+                activeTab === 'coupons' && (
+                  <div className="glass-panel section-card">
+                    <div className="section-header stacked-section-header">
+                      <h2>Coupon Directory</h2>
+                      <div className="toolbar-row">
+                        <button className="btn btn-primary" onClick={() => setShowCouponModal(true)}>
+                          <Plus size={16} /> Create Coupon
+                        </button>
+                      </div>
+                    </div>
+
+                    {coupons.length === 0 ? (
+                      <Empty icon={Ticket} title="No Coupons Found" text="Create coupons to offer discounts on checkout." />
+                    ) : (
+                      <div className="table-container">
+                        <table className="modern-table">
+                          <thead>
+                            <tr>
+                              <th>Code</th>
+                              <th>Discount</th>
+                              <th>Min Order</th>
+                              <th>Max Discount</th>
+                              <th>Description</th>
+                              <th>Status</th>
+                              <th>Actions</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {coupons.map(coupon => (
+                              <tr key={coupon.code}>
+                                <td>
+                                  <p className="accent-text" style={{ fontWeight: 'bold' }}>{coupon.code}</p>
+                                </td>
+                                <td>
+                                  <p>{coupon.discountPercent}% OFF</p>
+                                </td>
+                                <td>
+                                  <p>₹{coupon.minOrderAmount || 0}</p>
+                                </td>
+                                <td>
+                                  <p>{coupon.maxDiscount && coupon.maxDiscount < 999999 ? `₹${coupon.maxDiscount}` : 'Unlimited'}</p>
+                                </td>
+                                <td className="muted-cell">
+                                  <p>{coupon.description || 'No description provided'}</p>
+                                </td>
+                                <td>
+                                  <span className={`status-badge ${coupon.isActive ? 'verified' : 'rejected'}`}>
+                                    {coupon.isActive ? 'Active' : 'Inactive'}
+                                  </span>
+                                </td>
+                                <td>
+                                  <div className="actions-row">
+                                    <button className={`btn btn-sm ${coupon.isActive ? 'btn-secondary' : 'btn-primary'}`} onClick={() => toggleCouponActive(coupon.code, coupon.isActive)}>
+                                      {coupon.isActive ? 'Deactivate' : 'Activate'}
+                                    </button>
+                                    <button className="btn btn-danger btn-sm" onClick={() => deleteCoupon(coupon.code)}>
+                                      <Trash2 size={14} />
+                                    </button>
+                                  </div>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
                   </div>
-                  <div className="form-group">
-                    <label className="form-label">Automatic payout delay (hours)</label>
-                    <input type="number" min="0" className="form-control" value={payoutDelayHours} onChange={e => setPayoutDelayHours(e.target.value)} required />
+                )
+              }
+
+              {
+                activeTab === 'settings' && (
+                  <div className="glass-panel section-card">
+                    <div className="section-header"><h2>Fulfilment Configuration</h2></div>
+                    <form className="form-grid" onSubmit={saveServiceConfig}>
+                      <div className="form-group full-width">
+                        <label className="form-label">Service Cities (comma-separated)</label>
+                        <input className="form-control" value={serviceCitiesText} onChange={e => setServiceCitiesText(e.target.value)} placeholder="Delhi, Noida" />
+                      </div>
+                      <div className="form-group full-width">
+                        <label className="form-label">Service Pincodes (comma-separated)</label>
+                        <input className="form-control" value={servicePincodesText} onChange={e => setServicePincodesText(e.target.value)} placeholder="110001, 201301" />
+                      </div>
+                      <div className="form-group">
+                        <label className="form-label">Automatic payout delay (hours)</label>
+                        <input type="number" min="0" className="form-control" value={payoutDelayHours} onChange={e => setPayoutDelayHours(e.target.value)} required />
+                      </div>
+                      <div className="form-actions"><button className="btn btn-primary" type="submit">Save Settings</button></div>
+                    </form>
                   </div>
-                  <div className="form-actions"><button className="btn btn-primary" type="submit">Save Settings</button></div>
-                </form>
-              </div>
-            )}
-          </>
-        )}
-      </main>
+                )
+              }
+            </>
+          )
+        }
+      </main >
 
       {showProductModal && (
         <div className="modal-overlay">
@@ -1559,51 +1960,18 @@ function App() {
               </div>
               <div className="form-group">
                 <label className="form-label">Category</label>
-                <input type="text" className="form-control" value={newProductCat} onChange={e => setNewProductCat(e.target.value)} />
+                <select className="form-control" value={newProductCat} onChange={e => setNewProductCat(e.target.value)} required>
+                  <option value="">Select category</option>
+                  {categories.map(category => (
+                    <option key={category.name} value={category.name}>
+                      {category.name} ({category.isReturnable ? 'Returnable' : 'Non-returnable'})
+                    </option>
+                  ))}
+                </select>
               </div>
               <div className="form-group">
                 <label className="form-label">Seller Email Owner</label>
                 <input type="email" className="form-control" value={newProductSeller} onChange={e => setNewProductSeller(e.target.value)} />
-              </div>
-              <div className="form-group full-width">
-                <label className="form-label">Product Image (Firebase Storage)</label>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
-                  <label
-                    htmlFor="product-image-upload"
-                    className="btn btn-secondary btn-sm"
-                    style={{ cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '6px' }}
-                  >
-                    <Plus size={14} />
-                    {newProductImageFile ? 'Change Image' : 'Upload Image'}
-                  </label>
-                  <input
-                    id="product-image-upload"
-                    type="file"
-                    accept="image/*"
-                    style={{ display: 'none' }}
-                    onChange={handleProductImageChange}
-                  />
-                  {productImageUploading && (
-                    <span style={{ fontSize: '12px', color: 'var(--color-accent)' }}>
-                      <RefreshCw size={12} style={{ animation: 'spin 1.5s linear infinite', marginRight: '4px' }} />
-                      Uploading {productImageUploadProgress}%...
-                    </span>
-                  )}
-                  {newProductImageUrl && !productImageUploading && (
-                    <span style={{ fontSize: '11px', color: '#4caf50', display: 'flex', alignItems: 'center', gap: '4px' }}>
-                      <CheckCircle size={12} /> Image uploaded to Firebase Storage
-                    </span>
-                  )}
-                </div>
-                {newProductImagePreview && (
-                  <div style={{ marginTop: '10px' }}>
-                    <img
-                      src={newProductImagePreview}
-                      alt="Preview"
-                      style={{ width: '120px', height: '120px', objectFit: 'cover', borderRadius: '10px', border: '2px solid var(--color-accent)' }}
-                    />
-                  </div>
-                )}
               </div>
               <div className="form-group full-width">
                 <label className="form-label">Product Description</label>
@@ -1615,113 +1983,54 @@ function App() {
               </div>
               <div className="form-actions">
                 <button type="button" className="btn btn-secondary" onClick={() => setShowProductModal(false)}>Cancel</button>
-                <button type="submit" className="btn btn-primary" disabled={productImageUploading}>
-                  {productImageUploading ? 'Uploading Image...' : 'Publish Item'}
-                </button>
+                <button type="submit" className="btn btn-primary">Publish Item</button>
               </div>
             </form>
           </div>
         </div>
       )}
 
-      {showCouponModal && (
-        <div className="modal-overlay">
-          <div className="glass-panel modal-content">
-            <button className="close-btn" onClick={() => setShowCouponModal(false)}>x</button>
-            <h2 className="modal-title"><Plus size={22} color="var(--color-accent)" /> Create New Coupon</h2>
-            <form onSubmit={handleCreateCoupon} className="form-grid">
-              <div className="form-group">
-                <label className="form-label">Coupon Code</label>
-                <input type="text" className="form-control" value={newCouponCode} onChange={e => setNewCouponCode(e.target.value)} placeholder="e.g. BAZAAR50" required />
-              </div>
-              <div className="form-group">
-                <label className="form-label">Discount Percent (1-100)</label>
-                <input type="number" min="1" max="100" className="form-control" value={newCouponDiscount} onChange={e => setNewCouponDiscount(e.target.value)} required />
-              </div>
-              <div className="form-group">
-                <label className="form-label">Min Order Amount (₹)</label>
-                <input type="number" min="0" step="0.01" className="form-control" value={newCouponMinOrder} onChange={e => setNewCouponMinOrder(e.target.value)} placeholder="0" />
-              </div>
-              <div className="form-group">
-                <label className="form-label">Max Discount Amount (₹)</label>
-                <input type="number" min="0" step="0.01" className="form-control" value={newCouponMaxDiscount} onChange={e => setNewCouponMaxDiscount(e.target.value)} placeholder="Unlimited" />
-              </div>
-              <div className="form-group full-width">
-                <label className="form-label">Description</label>
-                <input type="text" className="form-control" value={newCouponDesc} onChange={e => setNewCouponDesc(e.target.value)} placeholder="Description of the coupon" />
-              </div>
-              <div className="form-group full-width checkbox-row">
-                <input type="checkbox" id="coupon-active-check" checked={newCouponActive} onChange={e => setNewCouponActive(e.target.checked)} />
-                <label htmlFor="coupon-active-check">Mark as Active instantly</label>
-              </div>
-              <div className="form-actions">
-                <button type="button" className="btn btn-secondary" onClick={() => setShowCouponModal(false)}>Cancel</button>
-                <button type="submit" className="btn btn-primary">Create Coupon</button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {showBannerModal && (
-        <div className="modal-overlay">
-          <div className="glass-panel modal-content">
-            <button className="close-btn" onClick={() => setShowBannerModal(false)}>x</button>
-            <h2 className="modal-title"><Plus size={22} color="var(--color-accent)" /> Create New Banner</h2>
-            <form onSubmit={handleCreateBanner} className="form-grid">
-              <div className="form-group">
-                <label className="form-label">Banner Label (e.g. LAUNCH SPECIAL)</label>
-                <input type="text" className="form-control" value={newBannerLabel} onChange={e => setNewBannerLabel(e.target.value)} placeholder="LAUNCH SPECIAL" required />
-              </div>
-              <div className="form-group">
-                <label className="form-label">Banner Title</label>
-                <input type="text" className="form-control" value={newBannerTitle} onChange={e => setNewBannerTitle(e.target.value)} placeholder="50% OFF SMART TECH" required />
-              </div>
-              <div className="form-group full-width">
-                <label className="form-label">Banner Description</label>
-                <input type="text" className="form-control" value={newBannerDesc} onChange={e => setNewBannerDesc(e.target.value)} placeholder="Futuristic wellness tech with AMOLED screens & rapid charge." />
-              </div>
-              <div className="form-group">
-                <label className="form-label">Target Category Link</label>
-                <select className="form-control" value={newBannerTargetCat} onChange={e => setNewBannerTargetCat(e.target.value)}>
-                  <option value="All">All Categories</option>
-                  <option value="Electronics">Electronics</option>
-                  <option value="Fresh Products">Fresh Products</option>
-                  <option value="Fashion">Fashion</option>
-                  <option value="Home & Kitchen">Home & Kitchen</option>
-                </select>
-              </div>
-              <div className="form-group">
-                <label className="form-label">Sort Order Index</label>
-                <input type="number" className="form-control" value={newBannerSortOrder} onChange={e => setNewBannerSortOrder(e.target.value)} placeholder="0" />
-              </div>
-              <div className="form-group">
-                <label className="form-label">Gradient Start Color (HEX)</label>
-                <div style={{ display: 'flex', gap: '8px' }}>
-                  <input type="color" value={newBannerGradientStart} onChange={e => setNewBannerGradientStart(e.target.value)} style={{ width: '40px', height: '38px', padding: '0', border: '1px solid var(--border-color)', borderRadius: '4px', cursor: 'pointer' }} />
-                  <input type="text" className="form-control" value={newBannerGradientStart} onChange={e => setNewBannerGradientStart(e.target.value)} placeholder="#1B5E20" required />
+      {
+        showCouponModal && (
+          <div className="modal-overlay">
+            <div className="glass-panel modal-content">
+              <button className="close-btn" onClick={() => setShowCouponModal(false)}>x</button>
+              <h2 className="modal-title"><Plus size={22} color="var(--color-accent)" /> Create New Coupon</h2>
+              <form onSubmit={handleCreateCoupon} className="form-grid">
+                <div className="form-group">
+                  <label className="form-label">Coupon Code</label>
+                  <input type="text" className="form-control" value={newCouponCode} onChange={e => setNewCouponCode(e.target.value)} placeholder="e.g. BAZAAR50" required />
                 </div>
-              </div>
-              <div className="form-group">
-                <label className="form-label">Gradient End Color (HEX)</label>
-                <div style={{ display: 'flex', gap: '8px' }}>
-                  <input type="color" value={newBannerGradientEnd} onChange={e => setNewBannerGradientEnd(e.target.value)} style={{ width: '40px', height: '38px', padding: '0', border: '1px solid var(--border-color)', borderRadius: '4px', cursor: 'pointer' }} />
-                  <input type="text" className="form-control" value={newBannerGradientEnd} onChange={e => setNewBannerGradientEnd(e.target.value)} placeholder="#A5D6A7" required />
+                <div className="form-group">
+                  <label className="form-label">Discount Percent (1-100)</label>
+                  <input type="number" min="1" max="100" className="form-control" value={newCouponDiscount} onChange={e => setNewCouponDiscount(e.target.value)} required />
                 </div>
-              </div>
-              <div className="form-group full-width checkbox-row">
-                <input type="checkbox" id="banner-active-check" checked={newBannerActive} onChange={e => setNewBannerActive(e.target.checked)} />
-                <label htmlFor="banner-active-check">Mark as Active instantly</label>
-              </div>
-              <div className="form-actions">
-                <button type="button" className="btn btn-secondary" onClick={() => setShowBannerModal(false)}>Cancel</button>
-                <button type="submit" className="btn btn-primary">Create Banner</button>
-              </div>
-            </form>
+                <div className="form-group">
+                  <label className="form-label">Min Order Amount (₹)</label>
+                  <input type="number" min="0" step="0.01" className="form-control" value={newCouponMinOrder} onChange={e => setNewCouponMinOrder(e.target.value)} placeholder="0" />
+                </div>
+                <div className="form-group">
+                  <label className="form-label">Max Discount Amount (₹)</label>
+                  <input type="number" min="0" step="0.01" className="form-control" value={newCouponMaxDiscount} onChange={e => setNewCouponMaxDiscount(e.target.value)} placeholder="Unlimited" />
+                </div>
+                <div className="form-group full-width">
+                  <label className="form-label">Description</label>
+                  <input type="text" className="form-control" value={newCouponDesc} onChange={e => setNewCouponDesc(e.target.value)} placeholder="Description of the coupon" />
+                </div>
+                <div className="form-group full-width checkbox-row">
+                  <input type="checkbox" id="coupon-active-check" checked={newCouponActive} onChange={e => setNewCouponActive(e.target.checked)} />
+                  <label htmlFor="coupon-active-check">Mark as Active instantly</label>
+                </div>
+                <div className="form-actions">
+                  <button type="button" className="btn btn-secondary" onClick={() => setShowCouponModal(false)}>Cancel</button>
+                  <button type="submit" className="btn btn-primary">Create Coupon</button>
+                </div>
+              </form>
+            </div>
           </div>
-        </div>
-      )}
-    </div>
+        )
+      }
+    </div >
   );
 }
 
@@ -1825,7 +2134,6 @@ function ProductsTab({ products, setShowProductModal, toggleProductFeatured, del
           <table className="modern-table product-table">
             <thead>
               <tr>
-                <th>Image</th>
                 <th>ID</th>
                 <th>Product Name</th>
                 <th>Category</th>
@@ -1838,32 +2146,6 @@ function ProductsTab({ products, setShowProductModal, toggleProductFeatured, del
             <tbody>
               {products.map(product => (
                 <tr key={product.id}>
-                  <td>
-                    {product.imageUrlName && (product.imageUrlName.startsWith('http://') || product.imageUrlName.startsWith('https://')) ? (
-                      <img
-                        src={product.imageUrlName}
-                        alt={product.name}
-                        style={{
-                          width: '52px',
-                          height: '52px',
-                          objectFit: 'cover',
-                          borderRadius: '8px',
-                          border: '1px solid #e0e0e0',
-                          display: 'block'
-                        }}
-                        onError={e => { e.target.style.display = 'none'; e.target.nextSibling.style.display = 'flex'; }}
-                      />
-                    ) : null}
-                    <div style={{
-                      width: '52px', height: '52px', borderRadius: '8px',
-                      background: 'rgba(0,128,0,0.08)',
-                      display: (!product.imageUrlName || (!product.imageUrlName.startsWith('http://') && !product.imageUrlName.startsWith('https://'))) ? 'flex' : 'none',
-                      alignItems: 'center', justifyContent: 'center',
-                      border: '1px dashed #ccc'
-                    }}>
-                      <ShoppingBag size={20} style={{ opacity: 0.3 }} />
-                    </div>
-                  </td>
                   <td className="table-subtext">#{product.id}</td>
                   <td>
                     <p>{product.name}</p>
@@ -1887,6 +2169,301 @@ function ProductsTab({ products, setShowProductModal, toggleProductFeatured, del
           </table>
         </div>
       )}
+    </div>
+  );
+}
+
+function PaymentsTab({ entries, totals, payoutAccounts, withdrawalRequests, onUpdateWithdrawalStatus, users }) {
+  const returnRows = entries.flatMap(entry =>
+    entry.returns.map(request => ({
+      ...request,
+      orderId: entry.order.orderId,
+      buyerEmail: entry.buyerEmail,
+      productName: request.productName || `Product #${request.productId || 'N/A'}`
+    }))
+  );
+
+  return (
+    <div>
+      <div className="mini-metrics-grid">
+        <Metric title="Customer Paid" value={formatCurrency(totals.paid)} icon={CreditCard} compact />
+        <Metric title="Seller Receivable" value={formatCurrency(totals.sellers)} icon={ShoppingBag} compact />
+        <Metric title="Delivery Receivable" value={formatCurrency(totals.delivery)} icon={Truck} compact />
+        <Metric title="Return Debit" value={formatCurrency(totals.returnDebit)} icon={RefreshCw} compact />
+        <Metric title="Payout Ready" value={formatCurrency(totals.payoutReady)} icon={CheckCircle} compact />
+        <Metric title="Payout Pending" value={formatCurrency(totals.payoutPending)} icon={Clock} compact />
+      </div>
+
+      <div className="glass-panel section-card">
+        <div className="section-header stacked-section-header">
+          <h2><CreditCard size={20} /> Payment Details</h2>
+        </div>
+
+        {entries.length === 0 ? (
+          <Empty icon={CreditCard} title="No Payments Found" text="Customer payment and payout details will appear after orders are placed." />
+        ) : (
+          <div className="table-container settlement-table-container">
+            <table className="modern-table settlement-table">
+              <thead>
+                <tr>
+                  <th>Order & User</th>
+                  <th>Payment</th>
+                  <th>Product Seller Split</th>
+                  <th>Delivery Boy</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {entries.map(entry => (
+                  <tr key={entry.order.orderId}>
+                    <td>
+                      <p className="accent-text">{entry.order.orderId}</p>
+                      <span className="table-subtext">{entry.buyerName}</span>
+                      <span className="table-subtext block-text">{entry.buyerEmail}</span>
+                      <span className="table-subtext block-text">{new Date(Number(entry.order.orderDate || 0)).toLocaleString()}</span>
+                    </td>
+                    <td>
+                      <p className="accent-text">{formatCurrency(entry.totalPaid)}</p>
+                      <span className="table-subtext">{entry.order.paymentMode || 'COD'}</span>
+                      {entry.order.paymentTransactionId && (
+                        <span className="table-subtext block-text">Txn: {entry.order.paymentTransactionId}</span>
+                      )}
+                      {entry.order.couponApplied && <span className="status-badge verified">{entry.order.couponApplied}</span>}
+                    </td>
+                    <td>
+                      <div className="settlement-lines">
+                        {entry.items.length === 0 ? (
+                          <span className="table-subtext">No product mapping found</span>
+                        ) : (
+                          entry.items.map((item, index) => (
+                            <div className="settlement-line" key={`${entry.order.orderId}-${item.productId || item.productName}-${index}`}>
+                              <div>
+                                <p>{item.productName}</p>
+                                <span className="table-subtext">
+                                  Qty {item.quantity} x {formatCurrency(item.unitPrice)} | Seller: {item.sellerName}
+                                </span>
+                                {item.sellerEmail && <span className="table-subtext block-text">{item.sellerEmail}</span>}
+                              </div>
+                              <strong>{formatCurrency(item.sellerReceivable)}</strong>
+                            </div>
+                          ))
+                        )}
+                      </div>
+                    </td>
+                    <td>
+                      {entry.deliveryPartnerEmail ? (
+                        <>
+                          <p>{entry.deliveryPartnerName}</p>
+                          <span className="table-subtext">{entry.deliveryPartnerEmail}</span>
+                          <p className="accent-text payout-amount">{formatCurrency(entry.deliveryEarning)}</p>
+                        </>
+                      ) : (
+                        <>
+                          <span className="status-badge pending">Not Accepted</span>
+                          <p className="table-subtext payout-amount">{formatCurrency(entry.deliveryEarning)} pending</p>
+                        </>
+                      )}
+                    </td>
+                    <td>
+                      <span className={`status-badge ${statusClass(entry.order.status)}`}>{entry.order.status || 'Pending'}</span>
+                      <span className="table-subtext block-text">{entry.order.deliveryStatus || 'Delivery not started'}</span>
+                      {isDeliveredOrder(entry.order) && (
+                        <span className="table-subtext block-text">
+                          Return window: {entry.returnWindowEnd ? new Date(entry.returnWindowEnd).toLocaleDateString() : 'N/A'}
+                        </span>
+                      )}
+                      <span className={`status-badge ${entry.payoutReady ? 'verified' : 'pending'}`}>
+                        {entry.payoutReady ? 'Withdraw Ready' : 'Withdraw Pending'}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      <div className="glass-panel section-card">
+        <div className="section-header stacked-section-header">
+          <h2><RefreshCw size={20} /> Return Debit Details</h2>
+        </div>
+
+        {returnRows.length === 0 ? (
+          <Empty icon={RefreshCw} title="No Return Debits" text="Approved or completed return deductions will appear here." />
+        ) : (
+          <div className="table-container settlement-table-container">
+            <table className="modern-table return-table">
+              <thead>
+                <tr>
+                  <th>Return</th>
+                  <th>Seller Account</th>
+                  <th>Debit Breakup</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {returnRows.map(request => (
+                  <tr key={`${request.orderId}-${request.id}`}>
+                    <td>
+                      <p className="accent-text">{request.id || 'Return Request'}</p>
+                      <span className="table-subtext">Order: {request.orderId}</span>
+                      <span className="table-subtext block-text">Buyer: {request.buyerEmail}</span>
+                      <span className="table-subtext block-text">{request.productName}</span>
+                    </td>
+                    <td>
+                      <p>{request.sellerName}</p>
+                      <span className="table-subtext">{request.sellerEmail || 'System Store'}</span>
+                    </td>
+                    <td>
+                      <p className="accent-text">{formatCurrency(request.debitAmount)}</p>
+                      <span className="table-subtext">Refund: {formatCurrency(request.returnAmount)}</span>
+                      <span className="table-subtext block-text">Return delivery: {formatCurrency(request.deliveryFee)}</span>
+                    </td>
+                    <td>
+                      <span className={`status-badge ${request.isCompleted ? 'cancelled' : 'pending'}`}>
+                        {request.isCompleted ? 'Actual Debit' : 'Expected Debit'}
+                      </span>
+                      <span className="table-subtext block-text">{request.status || 'Pending'}</span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      <div className="glass-panel section-card">
+        <div className="section-header stacked-section-header">
+          <h2><CheckCircle size={20} /> Withdraw Pending / Ready</h2>
+          <p className="section-note">Return window: {RETURN_WINDOW_DAYS} days after delivery. Ready amount can be paid to the listed bank account.</p>
+        </div>
+
+        {payoutAccounts.length === 0 ? (
+          <Empty icon={CheckCircle} title="No Payout Accounts" text="Seller and delivery partner payout rows will appear after delivered orders." />
+        ) : (
+          <div className="table-container settlement-table-container">
+            <table className="modern-table payout-table">
+              <thead>
+                <tr>
+                  <th>Account</th>
+                  <th>Bank Details</th>
+                  <th>Ready To Pay</th>
+                  <th>Pending</th>
+                  <th>Return Debits</th>
+                  <th>Orders</th>
+                </tr>
+              </thead>
+              <tbody>
+                {payoutAccounts.map(account => (
+                  <tr key={account.key}>
+                    <td>
+                      <p>{account.name}</p>
+                      <span className={`role-chip role-${account.role.toLowerCase()}`}>{roleLabel(account.role)}</span>
+                      <span className="table-subtext block-text">{account.email || 'System account'}</span>
+                    </td>
+                    <td className="muted-cell">
+                      <p>{account.bankDetails}</p>
+                    </td>
+                    <td>
+                      <p className="accent-text">{formatCurrency(account.readyAmount)}</p>
+                      <span className="status-badge verified">Withdraw Ready</span>
+                    </td>
+                    <td>
+                      <p>{formatCurrency(account.pendingAmount)}</p>
+                      <span className="status-badge pending">Return Window Pending</span>
+                    </td>
+                    <td>
+                      <p className="status-badge cancelled">{formatCurrency(account.returnDebits)} cut</p>
+                      {account.expectedReturnDebits > 0 && (
+                        <span className="table-subtext block-text">Expected: {formatCurrency(account.expectedReturnDebits)}</span>
+                      )}
+                    </td>
+                    <td className="muted-cell">
+                      <p>{account.orders.join(', ')}</p>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      <div className="glass-panel section-card">
+        <div className="section-header stacked-section-header">
+          <h2><CreditCard size={20} /> Withdrawal Requests</h2>
+          <p className="section-note">Admin can mark each request as Pending, Success, or Rejected.</p>
+        </div>
+
+        {withdrawalRequests.length === 0 ? (
+          <Empty icon={CreditCard} title="No Withdrawal Requests" text="Seller and delivery partner withdrawal requests will appear here." />
+        ) : (
+          <div className="table-container settlement-table-container">
+            <table className="modern-table payout-table">
+              <thead>
+                <tr>
+                  <th>Request</th>
+                  <th>Account</th>
+                  <th>Amount</th>
+                  <th>Bank Details</th>
+                  <th>Status</th>
+                  <th>Admin Action</th>
+                </tr>
+              </thead>
+              <tbody>
+                {withdrawalRequests.map(request => {
+                  const accountEmail = request.accountEmail || request.deliveryPartnerEmail || '';
+                  const accountName = getDisplayNameByEmail(users, accountEmail, accountEmail || 'Account');
+
+                  return (
+                    <tr key={request.id}>
+                      <td>
+                        <p className="accent-text">{request.id}</p>
+                        <span className="table-subtext">{new Date(Number(request.requestDate || 0)).toLocaleString()}</span>
+                        {request.payoutId && <span className="table-subtext block-text">Payout: {request.payoutId}</span>}
+                      </td>
+                      <td>
+                        <p>{accountName}</p>
+                        <span className={`role-chip role-${(request.accountRole || 'DeliveryPartner').toLowerCase()}`}>{roleLabel(request.accountRole)}</span>
+                        <span className="table-subtext block-text">{accountEmail}</span>
+                      </td>
+                      <td>
+                        <p className="accent-text">{formatCurrency(request.amount)}</p>
+                      </td>
+                      <td className="muted-cell">
+                        <p>{request.bankDetails || 'Bank details not available'}</p>
+                        {request.failureReason && <span className="table-subtext block-text">Reason: {request.failureReason}</span>}
+                      </td>
+                      <td>
+                        <span className={`status-badge ${withdrawalStatusClass(request.status)}`}>
+                          {withdrawalStatusLabel(request.status)}
+                        </span>
+                        <span className="table-subtext block-text">{request.status || 'Scheduled'}</span>
+                      </td>
+                      <td>
+                        <div className="actions-row">
+                          {WITHDRAWAL_STATUS_ACTIONS.map(action => (
+                            <button
+                              key={action.status}
+                              className={`btn btn-sm ${action.className === 'cancelled' ? 'btn-danger' : action.className === 'verified' ? 'btn-primary' : 'btn-secondary'}`}
+                              onClick={() => onUpdateWithdrawalStatus(request.id, action.status)}
+                              disabled={request.status === action.status}
+                            >
+                              {action.label}
+                            </button>
+                          ))}
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
