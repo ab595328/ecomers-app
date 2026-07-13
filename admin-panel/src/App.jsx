@@ -16,7 +16,6 @@ import {
   Sparkles,
   Star,
   Trash2,
-  Truck,
   Users as UsersIcon,
   Settings,
   Ticket
@@ -457,8 +456,6 @@ function App() {
       setUsers([]);
       setProducts([]);
       setOrders([]);
-      setCategories([]);
-      setWithdrawalRequests([]);
       setCoupons([]);
       setLoading(false);
       return undefined;
@@ -832,7 +829,6 @@ function App() {
       shopAddress: user.requestedShopAddress || user.shopAddress,
       shopAddressLat: user.requestedShopAddress ? user.requestedShopAddressLat : user.shopAddressLat || 0,
       shopAddressLng: user.requestedShopAddress ? user.requestedShopAddressLng : user.shopAddressLng || 0,
-
       deliveryMobile: user.requestedDeliveryMobile || user.deliveryMobile || "",
       deliveryVehicleType: user.requestedDeliveryVehicleType || user.deliveryVehicleType || "",
       deliveryVehicleNumber: user.requestedDeliveryVehicleNumber || user.deliveryVehicleNumber || "",
@@ -1074,7 +1070,6 @@ function App() {
     const discountPercent = parseInt(newCouponDiscount, 10);
     const minOrderAmount = parseFloat(newCouponMinOrder || 0);
     const maxDiscount = parseFloat(newCouponMaxDiscount || 999999);
-
     if (!newCouponCode.trim() || Number.isNaN(discountPercent) || discountPercent <= 0 || discountPercent > 100) {
       alert('Please fill in a valid code and discount percent (1-100).');
       return;
@@ -1308,7 +1303,7 @@ function App() {
               {activeTab === 'categories' && 'Category Return Rules'}
               {activeTab === 'coupons' && 'Coupon Directory'}
               {activeTab === 'settings' && 'Service Area & Payout Settings'}
-            </h1>
+            </h1 >
             <p>
               {activeTab === 'dashboard' && 'Monitor marketplace stats, verification queues, revenue, and data tools.'}
               {activeTab === 'users' && 'Review buyers, sellers, delivery partners, admin accounts, and verification documents.'}
@@ -1319,34 +1314,35 @@ function App() {
               {activeTab === 'categories' && 'Add seller listing categories and define whether customers can request returns.'}
               {activeTab === 'coupons' && 'Create, configure, and monitor discount promo coupons.'}
               {activeTab === 'settings' && 'Control eligible cities, pincodes, and automatic Razorpay payout timing.'}
-            </p>
-          </div>
-        </header>
+            </p >
+          </div >
+        </header >
 
-        {loading ? (
-          <div className="empty-state">
-            <RefreshCw className="empty-state-icon" style={{ animation: 'spin 1.5s linear infinite' }} size={48} />
-            <h3>Syncing with Firebase...</h3>
-          </div>
-        ) : (
-          <>
-            {activeTab === 'dashboard' && (
-              <div>
-                <div className="metrics-grid">
-                  <Metric title="Total Revenue" value={formatCurrency(totalRevenue)} icon={CheckCircle} />
-                  <Metric title="Users" value={users.length} icon={UsersIcon} />
-                  <Metric title="Products" value={products.length} icon={ShoppingBag} />
-                  <Metric title="Orders" value={orders.length} icon={FileText} />
-                </div>
+        {
+          loading ? (
+            <div className="empty-state" >
+              <RefreshCw className="empty-state-icon" style={{ animation: 'spin 1.5s linear infinite' }} size={48} />
+              <h3>Syncing with Firebase...</h3>
+            </div>
+          ) : (
+            <>
+              {activeTab === 'dashboard' && (
+                <div>
+                  <div className="metrics-grid">
+                    <Metric title="Total Revenue" value={formatCurrency(totalRevenue)} icon={CheckCircle} />
+                    <Metric title="Users" value={users.length} icon={UsersIcon} />
+                    <Metric title="Products" value={products.length} icon={ShoppingBag} />
+                    <Metric title="Orders" value={orders.length} icon={FileText} />
+                  </div>
 
-                <div className="mini-metrics-grid">
-                  <Metric title="Buyers" value={buyerCount} icon={UsersIcon} compact />
-                  <Metric title="Sellers" value={`${activeSellersCount}/${sellerCount}`} icon={ShieldCheck} compact />
-                  <Metric title="Delivery Partners" value={partnerCount} icon={Clock} compact />
-                  <Metric title="Pending Reviews" value={pendingSellersCount + pendingPartnersCount} icon={AlertTriangle} compact />
-                </div>
+                  <div className="mini-metrics-grid">
+                    <Metric title="Buyers" value={buyerCount} icon={UsersIcon} compact />
+                    <Metric title="Sellers" value={`${activeSellersCount}/${sellerCount}`} icon={ShieldCheck} compact />
+                    <Metric title="Delivery Partners" value={partnerCount} icon={Clock} compact />
+                    <Metric title="Pending Reviews" value={pendingSellersCount + pendingPartnersCount} icon={AlertTriangle} compact />
+                  </div>
 
-                {/*
+                  {/*
                 <div className="glass-panel section-card data-tools">
                   <div className="section-header">
                     <h2><Database size={20} /> Firebase Database Tools</h2>
@@ -1367,571 +1363,582 @@ function App() {
                 </div>
                 */}
 
-                <div className="dashboard-grid">
-                  <RecentOrders orders={orders} setActiveTab={setActiveTab} />
-                  <div className="glass-panel section-card">
-                    <div className="section-header">
-                      <h2>Verification Queue</h2>
+                  <div className="dashboard-grid">
+                    <RecentOrders orders={orders} setActiveTab={setActiveTab} />
+                    <div className="glass-panel section-card">
+                      <div className="section-header">
+                        <h2>Verification Queue</h2>
+                      </div>
+                      <QueueLine label="Sellers awaiting approval" value={pendingSellersCount} onClick={() => setActiveTab('users')} />
+                      <QueueLine label="Delivery partners awaiting approval" value={pendingPartnersCount} onClick={() => setActiveTab('users')} />
                     </div>
-                    <QueueLine label="Sellers awaiting approval" value={pendingSellersCount} onClick={() => setActiveTab('users')} />
-                    <QueueLine label="Delivery partners awaiting approval" value={pendingPartnersCount} onClick={() => setActiveTab('users')} />
                   </div>
                 </div>
-              </div>
-            )}
+              )}
 
-            {activeTab === 'users' && (
-              <div className="glass-panel section-card">
-                <div className="section-header stacked-section-header">
-                  <h2>Platform Accounts</h2>
-                  <div className="toolbar-row">
-                    <div className="search-box">
-                      <Search size={16} />
-                      <input value={userSearch} onChange={e => setUserSearch(e.target.value)} placeholder="Search accounts" />
+              {activeTab === 'users' && (
+                <div className="glass-panel section-card">
+                  <div className="section-header stacked-section-header">
+                    <h2>Platform Accounts</h2>
+                    <div className="toolbar-row">
+                      <div className="search-box">
+                        <Search size={16} />
+                        <input value={userSearch} onChange={e => setUserSearch(e.target.value)} placeholder="Search accounts" />
+                      </div>
+                      <select className="form-control compact-select" value={userRoleFilter} onChange={e => setUserRoleFilter(e.target.value)}>
+                        {ROLE_FILTERS.map(role => <option key={role} value={role}>{role === 'All' ? 'All roles' : roleLabel(role)}</option>)}
+                      </select>
                     </div>
-                    <select className="form-control compact-select" value={userRoleFilter} onChange={e => setUserRoleFilter(e.target.value)}>
-                      {ROLE_FILTERS.map(role => <option key={role} value={role}>{role === 'All' ? 'All roles' : roleLabel(role)}</option>)}
-                    </select>
                   </div>
-                </div>
-                {filteredUsers.length === 0 ? (
-                  <Empty icon={UsersIcon} title="No Users Found" text="No account matches the current filters." />
-                ) : (
-                  <div className="table-container">
-                    <table className="modern-table">
-                      <thead>
-                        <tr>
-                          <th>User Profile</th>
-                          <th>Role</th>
-                          <th>Account Details</th>
-                          <th>Verification</th>
-                          <th>Manage</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {filteredUsers.map(user => (
-                          <React.Fragment key={user.email}>
-                            <tr>
-                              <td>
-                                <div className="identity-cell">
-                                  <div className="avatar">{(user.name || user.email || 'U').substring(0, 2).toUpperCase()}</div>
-                                  <div>
-                                    <p>{user.name || 'N/A'}</p>
-                                    <span>{user.email}</span>
+                  {filteredUsers.length === 0 ? (
+                    <Empty icon={UsersIcon} title="No Users Found" text="No account matches the current filters." />
+                  ) : (
+                    <div className="table-container">
+                      <table className="modern-table">
+                        <thead>
+                          <tr>
+                            <th>User Profile</th>
+                            <th>Role</th>
+                            <th>Account Details</th>
+                            <th>Verification</th>
+                            <th>Manage</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {filteredUsers.map(user => (
+                            <React.Fragment key={user.email}>
+                              <tr>
+                                <td>
+                                  <div className="identity-cell">
+                                    <div className="avatar">{(user.name || user.email || 'U').substring(0, 2).toUpperCase()}</div>
+                                    <div>
+                                      <p>{user.name || 'N/A'}</p>
+                                      <span>{user.email}</span>
+                                    </div>
                                   </div>
-                                </div>
-                              </td>
-                              <td><span className={`role-chip role-${(user.role || 'User').toLowerCase()}`}>{roleLabel(user.role)}</span></td>
-                              <td className="muted-cell">
-                                {user.role === 'Seller' && <><DetailLine label="Shop" value={user.shopName || 'N/A'} /><DetailLine label="Mobile" value={user.sellerMobile} /></>}
-                                {user.role === 'DeliveryPartner' && <><DetailLine label="Vehicle" value={`${user.deliveryVehicleType || 'Vehicle'} ${user.deliveryVehicleNumber || ''}`} /><DetailLine label="Mobile" value={user.deliveryMobile} /></>}
-                                {(!user.role || user.role === 'User' || user.role === 'Admin') && <><DetailLine label="Phone" value={user.phone} /><DetailLine label="Address" value={user.savedAddress || 'None configured'} /></>}
-                              </td>
-                              <td><UserStatus user={user} /></td>
-                              <td>
-                                <div className="actions-row">
-                                  {user.role === 'Seller' && <button className={`btn btn-sm ${user.isSellerVerified ? 'btn-secondary' : 'btn-primary'}`} onClick={() => toggleSellerVerification(user.email, user.isSellerVerified)}>{user.isSellerVerified ? 'Revoke' : 'Approve'}</button>}
-                                  {user.role === 'DeliveryPartner' && <button className={`btn btn-sm ${user.isDeliveryPartnerVerified ? 'btn-secondary' : 'btn-primary'}`} onClick={() => toggleDeliveryVerification(user.email, user.isDeliveryPartnerVerified)}>{user.isDeliveryPartnerVerified ? 'Revoke' : 'Approve'}</button>}
-                                  <button className="btn btn-secondary btn-sm" onClick={() => setExpandedUserEmail(expandedUserEmail === user.email ? '' : user.email)}>Details</button>
-                                  <button className="btn btn-danger btn-sm" onClick={() => deleteUser(user.email)}><Trash2 size={14} /></button>
-                                </div>
-                              </td>
-                            </tr>
-                            {expandedUserEmail === user.email && (
-                              <tr className="detail-row">
-                                <td colSpan="5">
-                                  <div className="detail-grid">
-                                    <DetailLine label="Saved cards" value={user.savedCards} />
-                                    <DetailLine label="Language" value={user.selectedLanguage} />
-                                    <DetailLine label="Plus member" value={user.isPlusMember ? 'Yes' : 'No'} />
-                                    <DetailLine label="Notifications" value={user.notificationsEnabled ? 'Enabled' : 'Disabled'} />
-                                    <DetailLine label="Shop address" value={user.shopAddress} />
-                                    <DetailLine label="Aadhaar" value={user.sellerAadhaar || user.deliveryAadhaar} />
-                                    <DetailLine label="Bank account" value={user.sellerBankAccount || user.deliveryBankAccount} />
-                                    <DetailLine label="PAN" value={user.sellerPanCard} />
-                                    <DetailLine label="GST" value={user.sellerGstNumber} />
-                                    <DetailLine label="Emergency contact" value={user.deliveryEmergencyContact} />
-                                    <DetailLine label="Edit request" value={user.editRequestPending ? 'Pending Approval' : 'None'} />
-                                  </div>
-
-                                  {user.sellerVideoUrl && (
-                                    <div style={{ marginTop: '16px' }}>
-                                      <p style={{ margin: '0 0 6px 0', fontSize: '12px', color: '#666', fontWeight: 'bold' }}>Seller Introduction Video:</p>
-                                      <video src={user.sellerVideoUrl} controls width="320" style={{ borderRadius: '8px', border: '1px solid #ddd' }} />
-                                    </div>
-                                  )}
-
-                                  {(user.sellerShopPhoto || user.sellerOwnerPhoto || user.deliveryPhoto) && (
-                                    <div style={{ marginTop: '16px', display: 'flex', gap: '16px', flexWrap: 'wrap' }}>
-                                      {user.sellerShopPhoto && (
-                                        <div>
-                                          <p style={{ margin: '0 0 6px 0', fontSize: '12px', color: '#666', fontWeight: 'bold' }}>Shop Image:</p>
-                                          <img src={user.sellerShopPhoto} alt="Shop" style={{ width: '120px', height: '120px', objectFit: 'cover', borderRadius: '8px', border: '1px solid #ddd' }} />
-                                        </div>
-                                      )}
-                                      {user.sellerOwnerPhoto && (
-                                        <div>
-                                          <p style={{ margin: '0 0 6px 0', fontSize: '12px', color: '#666', fontWeight: 'bold' }}>Owner Selfie/Photo:</p>
-                                          <img src={user.sellerOwnerPhoto} alt="Owner" style={{ width: '120px', height: '120px', objectFit: 'cover', borderRadius: '8px', border: '1px solid #ddd' }} />
-                                        </div>
-                                      )}
-                                      {user.deliveryPhoto && (
-                                        <div>
-                                          <p style={{ margin: '0 0 6px 0', fontSize: '12px', color: '#666', fontWeight: 'bold' }}>Delivery Partner Photo:</p>
-                                          <img src={user.deliveryPhoto} alt="Delivery Partner" style={{ width: '120px', height: '120px', objectFit: 'cover', borderRadius: '8px', border: '1px solid #ddd' }} />
-                                        </div>
-                                      )}
-                                    </div>
-                                  )}
-
-                                  {user.editRequestPending && (
-                                    <div className="edit-request-box" style={{
-                                      marginTop: '16px',
-                                      padding: '16px',
-                                      borderRadius: '12px',
-                                      background: 'rgba(232, 245, 233, 0.4)',
-                                      border: '1px solid #c8e6c9',
-                                      display: 'flex',
-                                      flexDirection: 'column',
-                                      gap: '12px'
-                                    }}>
-                                      <h4 style={{ margin: 0, color: '#2e7d32', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                                        ⏳ {user.role === 'Seller' ? 'Seller' : 'Delivery Partner'} Profile Edit Request Pending Approval
-                                      </h4>
-                                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
-                                        <div>
-                                          <p style={{ margin: '0 0 4px 0', fontSize: '12px', color: '#666', fontWeight: 'bold' }}>Current Profile Info:</p>
-                                          {user.role === 'Seller' ? (
-                                            <div style={{ fontSize: '13px' }}>
-                                              <div><strong>Owner Name:</strong> {user.name}</div>
-                                              <div><strong>Shop Name:</strong> {user.shopName}</div>
-                                              <div><strong>Shop Address:</strong> {user.shopAddress}</div>
-                                            </div>
-                                          ) : (
-                                            <div style={{ fontSize: '13px' }}>
-                                              <div><strong>Full Name:</strong> {user.name}</div>
-                                              <div><strong>Mobile:</strong> {user.deliveryMobile}</div>
-                                              <div><strong>Vehicle:</strong> {user.deliveryVehicleType} ({user.deliveryVehicleNumber})</div>
-                                              <div><strong>Emergency Contact:</strong> {user.deliveryEmergencyContact}</div>
-                                              <div><strong>Address:</strong> {user.deliveryAddress}</div>
-                                            </div>
-                                          )}
-                                        </div>
-                                        <div>
-                                          <p style={{ margin: '0 0 4px 0', fontSize: '12px', color: '#2e7d32', fontWeight: 'bold' }}>Requested Profile Updates:</p>
-                                          {user.role === 'Seller' ? (
-                                            <div style={{ fontSize: '13px', color: '#1b5e20' }}>
-                                              <div><strong>Owner Name:</strong> {user.requestedName || <span style={{ color: '#999', fontStyle: 'italic' }}>No change</span>}</div>
-                                              <div><strong>Shop Name:</strong> {user.requestedShopName || <span style={{ color: '#999', fontStyle: 'italic' }}>No change</span>}</div>
-                                              <div><strong>Shop Address:</strong> {user.requestedShopAddress || <span style={{ color: '#999', fontStyle: 'italic' }}>No change</span>}</div>
-                                            </div>
-                                          ) : (
-                                            <div style={{ fontSize: '13px', color: '#1b5e20' }}>
-                                              <div><strong>Full Name:</strong> {user.requestedName || <span style={{ color: '#999', fontStyle: 'italic' }}>No change</span>}</div>
-                                              <div><strong>Mobile:</strong> {user.requestedDeliveryMobile || <span style={{ color: '#999', fontStyle: 'italic' }}>No change</span>}</div>
-                                              <div><strong>Vehicle:</strong> {user.requestedDeliveryVehicleType ? `${user.requestedDeliveryVehicleType} (${user.requestedDeliveryVehicleNumber || 'N/A'})` : <span style={{ color: '#999', fontStyle: 'italic' }}>No change</span>}</div>
-                                              <div><strong>Emergency Contact:</strong> {user.requestedDeliveryEmergencyContact || <span style={{ color: '#999', fontStyle: 'italic' }}>No change</span>}</div>
-                                              <div><strong>Address:</strong> {user.requestedDeliveryAddress || <span style={{ color: '#999', fontStyle: 'italic' }}>No change</span>}</div>
-                                            </div>
-                                          )}
-                                        </div>
-                                      </div>
-                                      <div style={{ display: 'flex', gap: '8px', marginTop: '4px' }}>
-                                        <button className="btn btn-primary btn-sm" onClick={() => approveProfileEditRequest(user.email, user)}>
-                                          Approve Profile Changes
-                                        </button>
-                                        <button className="btn btn-secondary btn-sm" onClick={() => rejectProfileEditRequest(user.email)}>
-                                          Decline Profile Changes
-                                        </button>
-                                      </div>
-                                    </div>
-                                  )}
                                 </td>
-                              </tr>
-                            )}
-                          </React.Fragment>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-              </div>
-            )}
-
-            {activeTab === 'products' && (
-              <ProductsTab
-                products={products}
-                setShowProductModal={setShowProductModal}
-                toggleProductFeatured={toggleProductFeatured}
-                deleteProduct={deleteProduct}
-              />
-            )}
-
-            {activeTab === 'orders' && (
-              <div className="glass-panel section-card">
-                <div className="section-header stacked-section-header">
-                  <h2>Order Ledger</h2>
-                  <div className="toolbar-row">
-                    <div className="search-box">
-                      <Search size={16} />
-                      <input value={orderSearch} onChange={e => setOrderSearch(e.target.value)} placeholder="Search orders" />
-                    </div>
-                    <select className="form-control compact-select" value={orderStatusFilter} onChange={e => setOrderStatusFilter(e.target.value)}>
-                      <option value="All">All statuses</option>
-                      {ORDER_STATUSES.map(status => <option key={status} value={status}>{status}</option>)}
-                    </select>
-                  </div>
-                </div>
-
-                {filteredOrders.length === 0 ? (
-                  <Empty icon={FileText} title="No Orders Found" text="No order matches the current filters." />
-                ) : (
-                  <div className="table-container">
-                    <table className="modern-table">
-                      <thead>
-                        <tr>
-                          <th>Order</th>
-                          <th>Customer</th>
-                          <th>Items</th>
-                          <th>Payment</th>
-                          <th>Status</th>
-                          <th>Actions</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {filteredOrders.map(order => (
-                          <React.Fragment key={order.orderId}>
-                            <tr>
-                              <td>
-                                <p className="accent-text">{order.orderId}</p>
-                                <span className="table-subtext">{new Date(Number(order.orderDate || 0)).toLocaleString()}</span>
-                              </td>
-                              <td>
-                                <p>{order.email}</p>
-                                <span className="table-subtext clamp">{order.deliveryAddress || 'No delivery address'}</span>
-                              </td>
-                              <td>
-                                <p className="clamp">{order.itemsSummary}</p>
-                                {order.couponApplied && <span className="status-badge verified">{order.couponApplied}</span>}
-                              </td>
-                              <td>
-                                <p>{formatCurrency(order.totalAmount)}</p>
-                                <span className="table-subtext">{order.paymentMode || 'COD'}</span>
-                              </td>
-                              <td>
-                                <span className={`status-badge ${statusClass(order.status)}`}>{order.status || 'Pending'}</span>
-                              </td>
-                              <td>
-                                <div className="actions-row">
-                                  <select className="form-control compact-select" value={order.status || 'Pending'} onChange={e => updateOrder(order.orderId, { status: e.target.value })}>
-                                    {ORDER_STATUSES.map(status => <option key={status} value={status}>{status}</option>)}
-                                  </select>
-                                  <button className="btn btn-secondary btn-sm" onClick={() => setExpandedOrderId(expandedOrderId === order.orderId ? '' : order.orderId)}>Details</button>
-                                </div>
-                              </td>
-                            </tr>
-                            {expandedOrderId === order.orderId && (
-                              <tr className="detail-row">
-                                <td colSpan="6">
-                                  <div className="detail-grid">
-                                    <DetailLine label="Delivery partner" value={order.deliveryPartnerEmail || 'Not assigned'} />
-                                    <DetailLine label="Delivery status" value={order.deliveryStatus || 'Not started'} />
-                                    <DetailLine label="Seller confirmed" value={order.sellerConfirmed ? 'Yes' : 'No'} />
-                                    <DetailLine label="Seller reject requested" value={order.sellerRejectRequested ? 'Yes' : 'No'} />
-                                    <DetailLine label="Change delivery partner requested" value={order.sellerChangeDeliveryBoyRequested ? 'Yes' : 'No'} />
-                                    <DetailLine label="Full address" value={order.deliveryAddress} />
-                                  </div>
-                                  <div className="toolbar-row detail-actions">
-                                    <button className="btn btn-secondary btn-sm" onClick={() => updateOrder(order.orderId, { status: 'Shipped', deliveryStatus: 'On the Way' })}>Ship</button>
-                                    <button className="btn btn-primary btn-sm" onClick={() => updateOrder(order.orderId, { status: 'Delivered', deliveryStatus: 'Delivered' })}>Deliver</button>
-                                    <button className="btn btn-danger btn-sm" onClick={() => updateOrder(order.orderId, { status: 'Cancelled' })}>Cancel</button>
+                                <td><span className={`role-chip role-${(user.role || 'User').toLowerCase()}`}>{roleLabel(user.role)}</span></td>
+                                <td className="muted-cell">
+                                  {user.role === 'Seller' && <><DetailLine label="Shop" value={user.shopName || 'N/A'} /><DetailLine label="Mobile" value={user.sellerMobile} /></>}
+                                  {user.role === 'DeliveryPartner' && <><DetailLine label="Vehicle" value={`${user.deliveryVehicleType || 'Vehicle'} ${user.deliveryVehicleNumber || ''}`} /><DetailLine label="Mobile" value={user.deliveryMobile} /></>}
+                                  {(!user.role || user.role === 'User' || user.role === 'Admin') && <><DetailLine label="Phone" value={user.phone} /><DetailLine label="Address" value={user.savedAddress || 'None configured'} /></>}
+                                </td>
+                                <td><UserStatus user={user} /></td>
+                                <td>
+                                  <div className="actions-row">
+                                    {user.role === 'Seller' && <button className={`btn btn-sm ${user.isSellerVerified ? 'btn-secondary' : 'btn-primary'}`} onClick={() => toggleSellerVerification(user.email, user.isSellerVerified)}>{user.isSellerVerified ? 'Revoke' : 'Approve'}</button>}
+                                    {user.role === 'DeliveryPartner' && <button className={`btn btn-sm ${user.isDeliveryPartnerVerified ? 'btn-secondary' : 'btn-primary'}`} onClick={() => toggleDeliveryVerification(user.email, user.isDeliveryPartnerVerified)}>{user.isDeliveryPartnerVerified ? 'Revoke' : 'Approve'}</button>}
+                                    <button className="btn btn-secondary btn-sm" onClick={() => setExpandedUserEmail(expandedUserEmail === user.email ? '' : user.email)}>Details</button>
+                                    <button className="btn btn-danger btn-sm" onClick={() => deleteUser(user.email)}><Trash2 size={14} /></button>
                                   </div>
                                 </td>
                               </tr>
-                            )}
-                          </React.Fragment>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-              </div>
-            )}
+                              {expandedUserEmail === user.email && (
+                                <tr className="detail-row">
+                                  <td colSpan="5">
+                                    <div className="detail-grid">
+                                      <DetailLine label="Saved cards" value={user.savedCards} />
+                                      <DetailLine label="Language" value={user.selectedLanguage} />
+                                      <DetailLine label="Plus member" value={user.isPlusMember ? 'Yes' : 'No'} />
+                                      <DetailLine label="Notifications" value={user.notificationsEnabled ? 'Enabled' : 'Disabled'} />
+                                      <DetailLine label="Shop address" value={user.shopAddress} />
+                                      <DetailLine label="Aadhaar" value={user.sellerAadhaar || user.deliveryAadhaar} />
+                                      <DetailLine label="Bank account" value={user.sellerBankAccount || user.deliveryBankAccount} />
+                                      <DetailLine label="PAN" value={user.sellerPanCard} />
+                                      <DetailLine label="GST" value={user.sellerGstNumber} />
+                                      <DetailLine label="Emergency contact" value={user.deliveryEmergencyContact} />
+                                      <DetailLine label="Edit request" value={user.editRequestPending ? 'Pending Approval' : 'None'} />
+                                    </div>
 
-            {activeTab === 'returns' && (
-              <div className="glass-panel section-card">
-                <div className="section-header stacked-section-header">
-                  <h2>Return Request Ledger</h2>
-                  <div className="toolbar-row">
-                    <div className="search-box">
-                      <Search size={16} />
-                      <input value={returnSearch} onChange={e => setReturnSearch(e.target.value)} placeholder="Search returns" />
-                    </div>
-                    <select className="form-control compact-select" value={returnStatusFilter} onChange={e => setReturnStatusFilter(e.target.value)}>
-                      <option value="All">All statuses</option>
-                      {['Pending', 'Approved', 'Pickup Accepted', 'Completed', 'Rejected'].map(status => <option key={status} value={status}>{status}</option>)}
-                    </select>
-                  </div>
-                </div>
+                                    {user.sellerVideoUrl && (
+                                      <div style={{ marginTop: '16px' }}>
+                                        <p style={{ margin: '0 0 6px 0', fontSize: '12px', color: '#666', fontWeight: 'bold' }}>Seller Introduction Video:</p>
+                                        <video src={user.sellerVideoUrl} controls width="320" style={{ borderRadius: '8px', border: '1px solid #ddd' }} />
+                                      </div>
+                                    )}
 
-                {filteredReturnRows.length === 0 ? (
-                  <Empty icon={RefreshCw} title="No Return Requests" text="Customer return requests will appear here after users submit them from the app." />
-                ) : (
-                  <div className="table-container settlement-table-container">
-                    <table className="modern-table return-table">
-                      <thead>
-                        <tr>
-                          <th>Return</th>
-                          <th>Customer & Product</th>
-                          <th>Seller Debit</th>
-                          <th>Delivery Pickup</th>
-                          <th>Status</th>
-                          <th>Actions</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {filteredReturnRows.map(request => (
-                          <tr key={`${request.orderId}-${request.id}`}>
-                            <td>
-                              <p className="accent-text">{request.id || 'Return Request'}</p>
-                              <span className="table-subtext">Order: {request.orderId}</span>
-                              <span className="table-subtext block-text">{request.requestDate ? new Date(Number(request.requestDate)).toLocaleString() : 'No request date'}</span>
-                              {request.photoUrl && (
-                                <a className="table-subtext block-text" href={request.photoUrl} target="_blank" rel="noreferrer">View customer photo</a>
+                                    {(user.sellerShopPhoto || user.sellerOwnerPhoto || user.deliveryPhoto) && (
+                                      <div style={{ marginTop: '16px', display: 'flex', gap: '16px', flexWrap: 'wrap' }}>
+                                        {user.sellerShopPhoto && (
+                                          <div>
+                                            <p style={{ margin: '0 0 6px 0', fontSize: '12px', color: '#666', fontWeight: 'bold' }}>Shop Image:</p>
+                                            <img src={user.sellerShopPhoto} alt="Shop" style={{ width: '120px', height: '120px', objectFit: 'cover', borderRadius: '8px', border: '1px solid #ddd' }} />
+                                          </div>
+                                        )}
+                                        {user.sellerOwnerPhoto && (
+                                          <div>
+                                            <p style={{ margin: '0 0 6px 0', fontSize: '12px', color: '#666', fontWeight: 'bold' }}>Owner Selfie/Photo:</p>
+                                            <img src={user.sellerOwnerPhoto} alt="Owner" style={{ width: '120px', height: '120px', objectFit: 'cover', borderRadius: '8px', border: '1px solid #ddd' }} />
+                                          </div>
+                                        )}
+                                        {user.deliveryPhoto && (
+                                          <div>
+                                            <p style={{ margin: '0 0 6px 0', fontSize: '12px', color: '#666', fontWeight: 'bold' }}>Delivery Partner Photo:</p>
+                                            <img src={user.deliveryPhoto} alt="Delivery Partner" style={{ width: '120px', height: '120px', objectFit: 'cover', borderRadius: '8px', border: '1px solid #ddd' }} />
+                                          </div>
+                                        )}
+                                      </div>
+                                    )}
+
+                                    {user.editRequestPending && (
+                                      <div className="edit-request-box" style={{
+                                        marginTop: '16px',
+                                        padding: '16px',
+                                        borderRadius: '12px',
+                                        background: 'rgba(232, 245, 233, 0.4)',
+                                        border: '1px solid #c8e6c9',
+                                        display: 'flex',
+                                        flexDirection: 'column',
+                                        gap: '12px'
+                                      }}>
+                                        <h4 style={{ margin: 0, color: '#2e7d32', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                          ⏳ {user.role === 'Seller' ? 'Seller' : 'Delivery Partner'} Profile Edit Request Pending Approval
+                                        </h4>
+                                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+                                          <div>
+                                            <p style={{ margin: '0 0 4px 0', fontSize: '12px', color: '#666', fontWeight: 'bold' }}>Current Profile Info:</p>
+                                            {user.role === 'Seller' ? (
+                                              <div style={{ fontSize: '13px' }}>
+                                                <div><strong>Owner Name:</strong> {user.name}</div>
+                                                <div><strong>Shop Name:</strong> {user.shopName}</div>
+                                                <div><strong>Shop Address:</strong> {user.shopAddress}</div>
+                                              </div>
+                                            ) : (
+                                              <div style={{ fontSize: '13px' }}>
+                                                <div><strong>Full Name:</strong> {user.name}</div>
+                                                <div><strong>Mobile:</strong> {user.deliveryMobile}</div>
+                                                <div><strong>Vehicle:</strong> {user.deliveryVehicleType} ({user.deliveryVehicleNumber})</div>
+                                                <div><strong>Emergency Contact:</strong> {user.deliveryEmergencyContact}</div>
+                                                <div><strong>Address:</strong> {user.deliveryAddress}</div>
+                                              </div>
+                                            )}
+                                          </div>
+                                          <div>
+                                            <p style={{ margin: '0 0 4px 0', fontSize: '12px', color: '#2e7d32', fontWeight: 'bold' }}>Requested Profile Updates:</p>
+                                            {user.role === 'Seller' ? (
+                                              <div style={{ fontSize: '13px', color: '#1b5e20' }}>
+                                                <div><strong>Owner Name:</strong> {user.requestedName || <span style={{ color: '#999', fontStyle: 'italic' }}>No change</span>}</div>
+                                                <div><strong>Shop Name:</strong> {user.requestedShopName || <span style={{ color: '#999', fontStyle: 'italic' }}>No change</span>}</div>
+                                                <div><strong>Shop Address:</strong> {user.requestedShopAddress || <span style={{ color: '#999', fontStyle: 'italic' }}>No change</span>}</div>
+                                              </div>
+                                            ) : (
+                                              <div style={{ fontSize: '13px', color: '#1b5e20' }}>
+                                                <div><strong>Full Name:</strong> {user.requestedName || <span style={{ color: '#999', fontStyle: 'italic' }}>No change</span>}</div>
+                                                <div><strong>Mobile:</strong> {user.requestedDeliveryMobile || <span style={{ color: '#999', fontStyle: 'italic' }}>No change</span>}</div>
+                                                <div><strong>Vehicle:</strong> {user.requestedDeliveryVehicleType ? `${user.requestedDeliveryVehicleType} (${user.requestedDeliveryVehicleNumber || 'N/A'})` : <span style={{ color: '#999', fontStyle: 'italic' }}>No change</span>}</div>
+                                                <div><strong>Emergency Contact:</strong> {user.requestedDeliveryEmergencyContact || <span style={{ color: '#999', fontStyle: 'italic' }}>No change</span>}</div>
+                                                <div><strong>Address:</strong> {user.requestedDeliveryAddress || <span style={{ color: '#999', fontStyle: 'italic' }}>No change</span>}</div>
+                                              </div>
+                                            )}
+                                          </div>
+                                        </div>
+                                        <div style={{ display: 'flex', gap: '8px', marginTop: '4px' }}>
+                                          <button className="btn btn-primary btn-sm" onClick={() => approveProfileEditRequest(user.email, user)}>
+                                            Approve Profile Changes
+                                          </button>
+                                          <button className="btn btn-secondary btn-sm" onClick={() => rejectProfileEditRequest(user.email)}>
+                                            Decline Profile Changes
+                                          </button>
+                                        </div>
+                                      </div>
+                                    )}
+                                  </td>
+                                </tr>
                               )}
-                            </td>
-                            <td>
-                              <p>{request.productName}</p>
-                              <span className="table-subtext">Customer: {request.customerName}</span>
-                              <span className="table-subtext block-text">{request.customerEmail}</span>
-                              <span className="table-subtext block-text">Reason: {request.reason || 'No reason provided'}</span>
-                            </td>
-                            <td>
-                              <p>{request.sellerName}</p>
-                              <span className="table-subtext block-text">{request.sellerEmail || 'System Store'}</span>
-                              <span className="table-subtext">Refund: {formatCurrency(request.returnAmount)}</span>
-                              <span className="table-subtext block-text">Return delivery: {formatCurrency(request.deliveryFee)}</span>
-                              <span className="table-subtext block-text payout-amount">Total debit: {formatCurrency(request.debitAmount)}</span>
-                            </td>
-                            <td>
-                              <p>{request.deliveryPartnerName}</p>
-                              <span className="table-subtext block-text">{request.deliveryPartnerEmail || 'Delivery boy not accepted yet'}</span>
-                              <span className="table-subtext block-text">Pickup: {request.order.deliveryAddress || 'Customer address missing'}</span>
-                            </td>
-                            <td>
-                              <span className={`status-badge ${statusClass(request.status)}`}>{request.status || 'Pending'}</span>
-                              {request.approvedDate > 0 && <span className="table-subtext block-text">Approved: {new Date(Number(request.approvedDate)).toLocaleString()}</span>}
-                            </td>
-                            <td>
-                              <div className="actions-row">
-                                <button className="btn btn-primary btn-sm" onClick={() => updateReturnRequest(request.orderId, request.id, { status: 'Approved' })}>
-                                  Approve
-                                </button>
-                                <button className="btn btn-secondary btn-sm" onClick={() => updateReturnRequest(request.orderId, request.id, { status: 'Pending', deliveryPartnerEmail: '' })}>
-                                  Pending
-                                </button>
-                                <button className="btn btn-secondary btn-sm" onClick={() => updateReturnRequest(request.orderId, request.id, { status: 'Completed' })}>
-                                  Complete
-                                </button>
-                                <button className="btn btn-danger btn-sm" onClick={() => updateReturnRequest(request.orderId, request.id, { status: 'Rejected', deliveryPartnerEmail: '' })}>
-                                  Reject
-                                </button>
-                              </div>
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-              </div>
-            )}
-
-            {activeTab === 'payments' && (
-              <PaymentsTab
-                entries={settlementEntries}
-                totals={settlementTotals}
-                payoutAccounts={payoutAccounts}
-                withdrawalRequests={withdrawalRequests}
-                onUpdateWithdrawalStatus={updateWithdrawalStatus}
-                users={users}
-              />
-            )}
-
-            {activeTab === 'categories' && (
-              <div className="glass-panel section-card">
-                <div className="section-header stacked-section-header">
-                  <h2>Category Return Controls</h2>
+                            </React.Fragment>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
                 </div>
+              )}
 
-                <form className="form-grid" onSubmit={handleCreateCategory}>
-                  <div className="form-group">
-                    <label className="form-label">Category Name</label>
-                    <input
-                      className="form-control"
-                      value={newCategoryName}
-                      onChange={e => setNewCategoryName(e.target.value)}
-                      placeholder="e.g. Electronics, Food, Vegetables"
-                      required
-                    />
-                  </div>
-                  <div className="form-group checkbox-row">
-                    <input
-                      type="checkbox"
-                      id="category-returnable"
-                      checked={newCategoryReturnable}
-                      onChange={e => setNewCategoryReturnable(e.target.checked)}
-                      disabled={['food', 'vegetables'].includes(newCategoryName.trim().toLowerCase())}
-                    />
-                    <label htmlFor="category-returnable">
-                      Returnable category
-                    </label>
-                  </div>
-                  <div className="form-actions">
-                    <button className="btn btn-primary" type="submit">
-                      <Plus size={16} /> Save Category
-                    </button>
-                  </div>
-                </form>
+              {activeTab === 'products' && (
+                <ProductsTab
+                  products={products}
+                  setShowProductModal={setShowProductModal}
+                  toggleProductFeatured={toggleProductFeatured}
+                  deleteProduct={deleteProduct}
+                />
+              )}
 
-                {categories.length === 0 ? (
-                  <Empty icon={Settings} title="No Categories Found" text="Add categories so sellers can select them during product listing." />
-                ) : (
-                  <div className="table-container">
-                    <table className="modern-table">
-                      <thead>
-                        <tr>
-                          <th>Category</th>
-                          <th>Return Rule</th>
-                          <th>Manage</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {categories.map(category => {
-                          const locked = ['food', 'vegetables'].includes(category.name.toLowerCase());
-                          return (
-                            <tr key={category.name}>
-                              <td>
-                                <p className="accent-text">{category.name}</p>
-                                {locked && <span className="table-subtext">Always non-returnable</span>}
-                              </td>
-                              <td>
-                                <span className={`status-badge ${category.isReturnable ? 'verified' : 'rejected'}`}>
-                                  {category.isReturnable ? 'Returnable' : 'Non-returnable'}
-                                </span>
-                              </td>
-                              <td>
-                                <div className="actions-row">
-                                  <button className="btn btn-secondary btn-sm" onClick={() => toggleCategoryReturnable(category)} disabled={locked}>
-                                    {category.isReturnable ? 'Mark Non-returnable' : 'Mark Returnable'}
-                                  </button>
-                                  <button className="btn btn-danger btn-sm" onClick={() => deleteCategory(category.name)}>
-                                    <Trash2 size={14} />
-                                  </button>
-                                </div>
-                              </td>
+              {activeTab === 'orders' && (
+                <div className="glass-panel section-card">
+                  <div className="section-header stacked-section-header">
+                    <h2>Order Ledger</h2>
+                    <div className="toolbar-row">
+                      <div className="search-box">
+                        <Search size={16} />
+                        <input value={orderSearch} onChange={e => setOrderSearch(e.target.value)} placeholder="Search orders" />
+                      </div>
+                      <select className="form-control compact-select" value={orderStatusFilter} onChange={e => setOrderStatusFilter(e.target.value)}>
+                        <option value="All">All statuses</option>
+                        {ORDER_STATUSES.map(status => <option key={status} value={status}>{status}</option>)}
+                      </select>
+                    </div>
+                  </div>
+
+                  {filteredOrders.length === 0 ? (
+                    <Empty icon={FileText} title="No Orders Found" text="No order matches the current filters." />
+                  ) : (
+                    <div className="table-container">
+                      <table className="modern-table">
+                        <thead>
+                          <tr>
+                            <th>Order</th>
+                            <th>Customer</th>
+                            <th>Items</th>
+                            <th>Payment</th>
+                            <th>Status</th>
+                            <th>Actions</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {filteredOrders.map(order => (
+                            <React.Fragment key={order.orderId}>
+                              <tr>
+                                <td>
+                                  <p className="accent-text">{order.orderId}</p>
+                                  <span className="table-subtext">{new Date(Number(order.orderDate || 0)).toLocaleString()}</span>
+                                </td>
+                                <td>
+                                  <p>{order.email}</p>
+                                  <span className="table-subtext clamp">{order.deliveryAddress || 'No delivery address'}</span>
+                                </td>
+                                <td>
+                                  <p className="clamp">{order.itemsSummary}</p>
+                                  {order.couponApplied && <span className="status-badge verified">{order.couponApplied}</span>}
+                                </td>
+                                <td>
+                                  <p>{formatCurrency(order.totalAmount)}</p>
+                                  <span className="table-subtext">{order.paymentMode || 'COD'}</span>
+                                </td>
+                                <td>
+                                  <span className={`status-badge ${statusClass(order.status)}`}>{order.status || 'Pending'}</span>
+                                </td>
+                                <td>
+                                  <div className="actions-row">
+                                    <select className="form-control compact-select" value={order.status || 'Pending'} onChange={e => updateOrder(order.orderId, { status: e.target.value })}>
+                                      {ORDER_STATUSES.map(status => <option key={status} value={status}>{status}</option>)}
+                                    </select>
+                                    <button className="btn btn-secondary btn-sm" onClick={() => setExpandedOrderId(expandedOrderId === order.orderId ? '' : order.orderId)}>Details</button>
+                                  </div>
+                                </td>
+                              </tr>
+                              {expandedOrderId === order.orderId && (
+                                <tr className="detail-row">
+                                  <td colSpan="6">
+                                    <div className="detail-grid">
+                                      <DetailLine label="Delivery partner" value={order.deliveryPartnerEmail || 'Not assigned'} />
+                                      <DetailLine label="Delivery status" value={order.deliveryStatus || 'Not started'} />
+                                      <DetailLine label="Seller confirmed" value={order.sellerConfirmed ? 'Yes' : 'No'} />
+                                      <DetailLine label="Seller reject requested" value={order.sellerRejectRequested ? 'Yes' : 'No'} />
+                                      <DetailLine label="Change delivery partner requested" value={order.sellerChangeDeliveryBoyRequested ? 'Yes' : 'No'} />
+                                      <DetailLine label="Full address" value={order.deliveryAddress} />
+                                    </div>
+                                    <div className="toolbar-row detail-actions">
+                                      <button className="btn btn-secondary btn-sm" onClick={() => updateOrder(order.orderId, { status: 'Shipped', deliveryStatus: 'On the Way' })}>Ship</button>
+                                      <button className="btn btn-primary btn-sm" onClick={() => updateOrder(order.orderId, { status: 'Delivered', deliveryStatus: 'Delivered' })}>Deliver</button>
+                                      <button className="btn btn-danger btn-sm" onClick={() => updateOrder(order.orderId, { status: 'Cancelled' })}>Cancel</button>
+                                    </div>
+                                  </td>
+                                </tr>
+                              )}
+                            </React.Fragment>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {
+                activeTab === 'returns' && (
+                  <div className="glass-panel section-card">
+                    <div className="section-header stacked-section-header">
+                      <h2>Return Request Ledger</h2>
+                      <div className="toolbar-row">
+                        <div className="search-box">
+                          <Search size={16} />
+                          <input value={returnSearch} onChange={e => setReturnSearch(e.target.value)} placeholder="Search returns" />
+                        </div>
+                        <select className="form-control compact-select" value={returnStatusFilter} onChange={e => setReturnStatusFilter(e.target.value)}>
+                          <option value="All">All statuses</option>
+                          {['Pending', 'Approved', 'Pickup Accepted', 'Completed', 'Rejected'].map(status => <option key={status} value={status}>{status}</option>)}
+                        </select>
+                      </div>
+                    </div>
+
+                    {filteredReturnRows.length === 0 ? (
+                      <Empty icon={RefreshCw} title="No Return Requests" text="Customer return requests will appear here after users submit them from the app." />
+                    ) : (
+                      <div className="table-container settlement-table-container">
+                        <table className="modern-table return-table">
+                          <thead>
+                            <tr>
+                              <th>Return</th>
+                              <th>Customer & Product</th>
+                              <th>Seller Debit</th>
+                              <th>Delivery Pickup</th>
+                              <th>Status</th>
+                              <th>Actions</th>
                             </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
+                          </thead>
+                          <tbody>
+                            {filteredReturnRows.map(request => (
+                              <tr key={`${request.orderId}-${request.id}`}>
+                                <td>
+                                  <p className="accent-text">{request.id || 'Return Request'}</p>
+                                  <span className="table-subtext">Order: {request.orderId}</span>
+                                  <span className="table-subtext block-text">{request.requestDate ? new Date(Number(request.requestDate)).toLocaleString() : 'No request date'}</span>
+                                  {request.photoUrl && (
+                                    <a className="table-subtext block-text" href={request.photoUrl} target="_blank" rel="noreferrer">View customer photo</a>
+                                  )}
+                                </td>
+                                <td>
+                                  <p>{request.productName}</p>
+                                  <span className="table-subtext">Customer: {request.customerName}</span>
+                                  <span className="table-subtext block-text">{request.customerEmail}</span>
+                                  <span className="table-subtext block-text">Reason: {request.reason || 'No reason provided'}</span>
+                                </td>
+                                <td>
+                                  <p>{request.sellerName}</p>
+                                  <span className="table-subtext block-text">{request.sellerEmail || 'System Store'}</span>
+                                  <span className="table-subtext">Refund: {formatCurrency(request.returnAmount)}</span>
+                                  <span className="table-subtext block-text">Return delivery: {formatCurrency(request.deliveryFee)}</span>
+                                  <span className="table-subtext block-text payout-amount">Total debit: {formatCurrency(request.debitAmount)}</span>
+                                </td>
+                                <td>
+                                  <p>{request.deliveryPartnerName}</p>
+                                  <span className="table-subtext block-text">{request.deliveryPartnerEmail || 'Delivery boy not accepted yet'}</span>
+                                  <span className="table-subtext block-text">Pickup: {request.order.deliveryAddress || 'Customer address missing'}</span>
+                                </td>
+                                <td>
+                                  <span className={`status-badge ${statusClass(request.status)}`}>{request.status || 'Pending'}</span>
+                                  {request.approvedDate > 0 && <span className="table-subtext block-text">Approved: {new Date(Number(request.approvedDate)).toLocaleString()}</span>}
+                                </td>
+                                <td>
+                                  <div className="actions-row">
+                                    <button className="btn btn-primary btn-sm" onClick={() => updateReturnRequest(request.orderId, request.id, { status: 'Approved' })}>
+                                      Approve
+                                    </button>
+                                    <button className="btn btn-secondary btn-sm" onClick={() => updateReturnRequest(request.orderId, request.id, { status: 'Pending', deliveryPartnerEmail: '' })}>
+                                      Pending
+                                    </button>
+                                    <button className="btn btn-secondary btn-sm" onClick={() => updateReturnRequest(request.orderId, request.id, { status: 'Completed' })}>
+                                      Complete
+                                    </button>
+                                    <button className="btn btn-danger btn-sm" onClick={() => updateReturnRequest(request.orderId, request.id, { status: 'Rejected', deliveryPartnerEmail: '' })}>
+                                      Reject
+                                    </button>
+                                  </div>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
                   </div>
-                )}
-              </div>
-            )}
+                )
+              }
 
-            {activeTab === 'coupons' && (
-              <div className="glass-panel section-card">
-                <div className="section-header stacked-section-header">
-                  <h2>Coupon Directory</h2>
-                  <div className="toolbar-row">
-                    <button className="btn btn-primary" onClick={() => setShowCouponModal(true)}>
-                      <Plus size={16} /> Create Coupon
-                    </button>
-                  </div>
-                </div>
+              {
+                activeTab === 'payments' && (
+                  <PaymentsTab
+                    entries={settlementEntries}
+                    totals={settlementTotals}
+                    payoutAccounts={payoutAccounts}
+                    withdrawalRequests={withdrawalRequests}
+                    onUpdateWithdrawalStatus={updateWithdrawalStatus}
+                    users={users}
+                  />
+                )
+              }
 
-                {coupons.length === 0 ? (
-                  <Empty icon={Ticket} title="No Coupons Found" text="Create coupons to offer discounts on checkout." />
-                ) : (
-                  <div className="table-container">
-                    <table className="modern-table">
-                      <thead>
-                        <tr>
-                          <th>Code</th>
-                          <th>Discount</th>
-                          <th>Min Order</th>
-                          <th>Max Discount</th>
-                          <th>Description</th>
-                          <th>Status</th>
-                          <th>Actions</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {coupons.map(coupon => (
-                          <tr key={coupon.code}>
-                            <td>
-                              <p className="accent-text" style={{ fontWeight: 'bold' }}>{coupon.code}</p>
-                            </td>
-                            <td>
-                              <p>{coupon.discountPercent}% OFF</p>
-                            </td>
-                            <td>
-                              <p>₹{coupon.minOrderAmount || 0}</p>
-                            </td>
-                            <td>
-                              <p>{coupon.maxDiscount && coupon.maxDiscount < 999999 ? `₹${coupon.maxDiscount}` : 'Unlimited'}</p>
-                            </td>
-                            <td className="muted-cell">
-                              <p>{coupon.description || 'No description provided'}</p>
-                            </td>
-                            <td>
-                              <span className={`status-badge ${coupon.isActive ? 'verified' : 'rejected'}`}>
-                                {coupon.isActive ? 'Active' : 'Inactive'}
-                              </span>
-                            </td>
-                            <td>
-                              <div className="actions-row">
-                                <button className={`btn btn-sm ${coupon.isActive ? 'btn-secondary' : 'btn-primary'}`} onClick={() => toggleCouponActive(coupon.code, coupon.isActive)}>
-                                  {coupon.isActive ? 'Deactivate' : 'Activate'}
-                                </button>
-                                <button className="btn btn-danger btn-sm" onClick={() => deleteCoupon(coupon.code)}>
-                                  <Trash2 size={14} />
-                                </button>
-                              </div>
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-              </div>
-            )}
+              {
+                activeTab === 'categories' && (
+                  <div className="glass-panel section-card">
+                    <div className="section-header stacked-section-header">
+                      <h2>Category Return Controls</h2>
+                    </div>
 
-            {activeTab === 'settings' && (
-              <div className="glass-panel section-card">
-                <div className="section-header"><h2>Fulfilment Configuration</h2></div>
-                <form className="form-grid" onSubmit={saveServiceConfig}>
-                  <div className="form-group full-width">
-                    <label className="form-label">Service Cities (comma-separated)</label>
-                    <input className="form-control" value={serviceCitiesText} onChange={e => setServiceCitiesText(e.target.value)} placeholder="Delhi, Noida" />
+                    <form className="form-grid" onSubmit={handleCreateCategory}>
+                      <div className="form-group">
+                        <label className="form-label">Category Name</label>
+                        <input
+                          className="form-control"
+                          value={newCategoryName}
+                          onChange={e => setNewCategoryName(e.target.value)}
+                          placeholder="e.g. Electronics, Food, Vegetables"
+                          required
+                        />
+                      </div>
+                      <div className="form-group checkbox-row">
+                        <input
+                          type="checkbox"
+                          id="category-returnable"
+                          checked={newCategoryReturnable}
+                          onChange={e => setNewCategoryReturnable(e.target.checked)}
+                          disabled={['food', 'vegetables'].includes(newCategoryName.trim().toLowerCase())}
+                        />
+                        <label htmlFor="category-returnable">
+                          Returnable category
+                        </label>
+                      </div>
+                      <div className="form-actions">
+                        <button className="btn btn-primary" type="submit">
+                          <Plus size={16} /> Save Category
+                        </button>
+                      </div>
+                    </form>
+
+                    {categories.length === 0 ? (
+                      <Empty icon={Settings} title="No Categories Found" text="Add categories so sellers can select them during product listing." />
+                    ) : (
+                      <div className="table-container">
+                        <table className="modern-table">
+                          <thead>
+                            <tr>
+                              <th>Category</th>
+                              <th>Return Rule</th>
+                              <th>Manage</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {categories.map(category => {
+                              const locked = ['food', 'vegetables'].includes(category.name.toLowerCase());
+                              return (
+                                <tr key={category.name}>
+                                  <td>
+                                    <p className="accent-text">{category.name}</p>
+                                    {locked && <span className="table-subtext">Always non-returnable</span>}
+                                  </td>
+                                  <td>
+                                    <span className={`status-badge ${category.isReturnable ? 'verified' : 'rejected'}`}>
+                                      {category.isReturnable ? 'Returnable' : 'Non-returnable'}
+                                    </span>
+                                  </td>
+                                  <td>
+                                    <div className="actions-row">
+                                      <button className="btn btn-secondary btn-sm" onClick={() => toggleCategoryReturnable(category)} disabled={locked}>
+                                        {category.isReturnable ? 'Mark Non-returnable' : 'Mark Returnable'}
+                                      </button>
+                                      <button className="btn btn-danger btn-sm" onClick={() => deleteCategory(category.name)}>
+                                        <Trash2 size={14} />
+                                      </button>
+                                    </div>
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
                   </div>
-                  <div className="form-group full-width">
-                    <label className="form-label">Service Pincodes (comma-separated)</label>
-                    <input className="form-control" value={servicePincodesText} onChange={e => setServicePincodesText(e.target.value)} placeholder="110001, 201301" />
+                )
+              }
+
+              {
+                activeTab === 'coupons' && (
+                  <div className="glass-panel section-card">
+                    <div className="section-header stacked-section-header">
+                      <h2>Coupon Directory</h2>
+                      <div className="toolbar-row">
+                        <button className="btn btn-primary" onClick={() => setShowCouponModal(true)}>
+                          <Plus size={16} /> Create Coupon
+                        </button>
+                      </div>
+                    </div>
+
+                    {coupons.length === 0 ? (
+                      <Empty icon={Ticket} title="No Coupons Found" text="Create coupons to offer discounts on checkout." />
+                    ) : (
+                      <div className="table-container">
+                        <table className="modern-table">
+                          <thead>
+                            <tr>
+                              <th>Code</th>
+                              <th>Discount</th>
+                              <th>Min Order</th>
+                              <th>Max Discount</th>
+                              <th>Description</th>
+                              <th>Status</th>
+                              <th>Actions</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {coupons.map(coupon => (
+                              <tr key={coupon.code}>
+                                <td>
+                                  <p className="accent-text" style={{ fontWeight: 'bold' }}>{coupon.code}</p>
+                                </td>
+                                <td>
+                                  <p>{coupon.discountPercent}% OFF</p>
+                                </td>
+                                <td>
+                                  <p>₹{coupon.minOrderAmount || 0}</p>
+                                </td>
+                                <td>
+                                  <p>{coupon.maxDiscount && coupon.maxDiscount < 999999 ? `₹${coupon.maxDiscount}` : 'Unlimited'}</p>
+                                </td>
+                                <td className="muted-cell">
+                                  <p>{coupon.description || 'No description provided'}</p>
+                                </td>
+                                <td>
+                                  <span className={`status-badge ${coupon.isActive ? 'verified' : 'rejected'}`}>
+                                    {coupon.isActive ? 'Active' : 'Inactive'}
+                                  </span>
+                                </td>
+                                <td>
+                                  <div className="actions-row">
+                                    <button className={`btn btn-sm ${coupon.isActive ? 'btn-secondary' : 'btn-primary'}`} onClick={() => toggleCouponActive(coupon.code, coupon.isActive)}>
+                                      {coupon.isActive ? 'Deactivate' : 'Activate'}
+                                    </button>
+                                    <button className="btn btn-danger btn-sm" onClick={() => deleteCoupon(coupon.code)}>
+                                      <Trash2 size={14} />
+                                    </button>
+                                  </div>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
                   </div>
-                  <div className="form-group">
-                    <label className="form-label">Automatic payout delay (hours)</label>
-                    <input type="number" min="0" className="form-control" value={payoutDelayHours} onChange={e => setPayoutDelayHours(e.target.value)} required />
+                )
+              }
+
+              {
+                activeTab === 'settings' && (
+                  <div className="glass-panel section-card">
+                    <div className="section-header"><h2>Fulfilment Configuration</h2></div>
+                    <form className="form-grid" onSubmit={saveServiceConfig}>
+                      <div className="form-group full-width">
+                        <label className="form-label">Service Cities (comma-separated)</label>
+                        <input className="form-control" value={serviceCitiesText} onChange={e => setServiceCitiesText(e.target.value)} placeholder="Delhi, Noida" />
+                      </div>
+                      <div className="form-group full-width">
+                        <label className="form-label">Service Pincodes (comma-separated)</label>
+                        <input className="form-control" value={servicePincodesText} onChange={e => setServicePincodesText(e.target.value)} placeholder="110001, 201301" />
+                      </div>
+                      <div className="form-group">
+                        <label className="form-label">Automatic payout delay (hours)</label>
+                        <input type="number" min="0" className="form-control" value={payoutDelayHours} onChange={e => setPayoutDelayHours(e.target.value)} required />
+                      </div>
+                      <div className="form-actions"><button className="btn btn-primary" type="submit">Save Settings</button></div>
+                    </form>
                   </div>
-                  <div className="form-actions"><button className="btn btn-primary" type="submit">Save Settings</button></div>
-                </form>
-              </div>
-            )}
-          </>
-        )}
-      </main>
+                )
+              }
+            </>
+          )
+        }
+      </main >
 
       {showProductModal && (
         <div className="modal-overlay">
@@ -1983,45 +1990,47 @@ function App() {
         </div>
       )}
 
-      {showCouponModal && (
-        <div className="modal-overlay">
-          <div className="glass-panel modal-content">
-            <button className="close-btn" onClick={() => setShowCouponModal(false)}>x</button>
-            <h2 className="modal-title"><Plus size={22} color="var(--color-accent)" /> Create New Coupon</h2>
-            <form onSubmit={handleCreateCoupon} className="form-grid">
-              <div className="form-group">
-                <label className="form-label">Coupon Code</label>
-                <input type="text" className="form-control" value={newCouponCode} onChange={e => setNewCouponCode(e.target.value)} placeholder="e.g. BAZAAR50" required />
-              </div>
-              <div className="form-group">
-                <label className="form-label">Discount Percent (1-100)</label>
-                <input type="number" min="1" max="100" className="form-control" value={newCouponDiscount} onChange={e => setNewCouponDiscount(e.target.value)} required />
-              </div>
-              <div className="form-group">
-                <label className="form-label">Min Order Amount (₹)</label>
-                <input type="number" min="0" step="0.01" className="form-control" value={newCouponMinOrder} onChange={e => setNewCouponMinOrder(e.target.value)} placeholder="0" />
-              </div>
-              <div className="form-group">
-                <label className="form-label">Max Discount Amount (₹)</label>
-                <input type="number" min="0" step="0.01" className="form-control" value={newCouponMaxDiscount} onChange={e => setNewCouponMaxDiscount(e.target.value)} placeholder="Unlimited" />
-              </div>
-              <div className="form-group full-width">
-                <label className="form-label">Description</label>
-                <input type="text" className="form-control" value={newCouponDesc} onChange={e => setNewCouponDesc(e.target.value)} placeholder="Description of the coupon" />
-              </div>
-              <div className="form-group full-width checkbox-row">
-                <input type="checkbox" id="coupon-active-check" checked={newCouponActive} onChange={e => setNewCouponActive(e.target.checked)} />
-                <label htmlFor="coupon-active-check">Mark as Active instantly</label>
-              </div>
-              <div className="form-actions">
-                <button type="button" className="btn btn-secondary" onClick={() => setShowCouponModal(false)}>Cancel</button>
-                <button type="submit" className="btn btn-primary">Create Coupon</button>
-              </div>
-            </form>
+      {
+        showCouponModal && (
+          <div className="modal-overlay">
+            <div className="glass-panel modal-content">
+              <button className="close-btn" onClick={() => setShowCouponModal(false)}>x</button>
+              <h2 className="modal-title"><Plus size={22} color="var(--color-accent)" /> Create New Coupon</h2>
+              <form onSubmit={handleCreateCoupon} className="form-grid">
+                <div className="form-group">
+                  <label className="form-label">Coupon Code</label>
+                  <input type="text" className="form-control" value={newCouponCode} onChange={e => setNewCouponCode(e.target.value)} placeholder="e.g. BAZAAR50" required />
+                </div>
+                <div className="form-group">
+                  <label className="form-label">Discount Percent (1-100)</label>
+                  <input type="number" min="1" max="100" className="form-control" value={newCouponDiscount} onChange={e => setNewCouponDiscount(e.target.value)} required />
+                </div>
+                <div className="form-group">
+                  <label className="form-label">Min Order Amount (₹)</label>
+                  <input type="number" min="0" step="0.01" className="form-control" value={newCouponMinOrder} onChange={e => setNewCouponMinOrder(e.target.value)} placeholder="0" />
+                </div>
+                <div className="form-group">
+                  <label className="form-label">Max Discount Amount (₹)</label>
+                  <input type="number" min="0" step="0.01" className="form-control" value={newCouponMaxDiscount} onChange={e => setNewCouponMaxDiscount(e.target.value)} placeholder="Unlimited" />
+                </div>
+                <div className="form-group full-width">
+                  <label className="form-label">Description</label>
+                  <input type="text" className="form-control" value={newCouponDesc} onChange={e => setNewCouponDesc(e.target.value)} placeholder="Description of the coupon" />
+                </div>
+                <div className="form-group full-width checkbox-row">
+                  <input type="checkbox" id="coupon-active-check" checked={newCouponActive} onChange={e => setNewCouponActive(e.target.checked)} />
+                  <label htmlFor="coupon-active-check">Mark as Active instantly</label>
+                </div>
+                <div className="form-actions">
+                  <button type="button" className="btn btn-secondary" onClick={() => setShowCouponModal(false)}>Cancel</button>
+                  <button type="submit" className="btn btn-primary">Create Coupon</button>
+                </div>
+              </form>
+            </div>
           </div>
-        </div>
-      )}
-    </div>
+        )
+      }
+    </div >
   );
 }
 
