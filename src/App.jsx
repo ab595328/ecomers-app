@@ -16,6 +16,7 @@ import {
   Sparkles,
   Star,
   Trash2,
+  Truck,
   Users as UsersIcon,
   Settings,
   Ticket
@@ -65,8 +66,65 @@ const defaultUsers = [
 
 
 const defaultOrders = [
-  { orderId: 'ORD-9872', email: 'buyer@bazaar.com', orderDate: Date.now() - 3600000 * 2, totalAmount: 134.98, status: 'Processing', itemsSummary: '1x ZYL Sound Pro Wireless ANC, 1x Organic Apples', paymentMode: 'Card ending in 4242', deliveryAddress: '22 Market Street, Eco City', couponApplied: 'GREEN10', deliveryPartnerEmail: '', deliveryStatus: '', sellerConfirmed: false },
-  { orderId: 'ORD-5431', email: 'buyer@bazaar.com', orderDate: Date.now() - 3600000 * 24, totalAmount: 4.99, status: 'Delivered', itemsSummary: '1x Premium Farms Organic Apples (1kg)', paymentMode: 'Wallet', deliveryAddress: '22 Market Street, Eco City', deliveryPartnerEmail: 'rider@bazaar.com', deliveryStatus: 'Delivered', sellerConfirmed: true }
+  {
+    orderId: 'ORD-9872',
+    email: 'buyer@bazaar.com',
+    orderDate: Date.now() - 3600000 * 2,
+    totalAmount: 134.98,
+    status: 'Processing',
+    itemsSummary: '1x ZYL Sound Pro Wireless ANC, 1x Premium Farms Organic Apples (1kg)',
+    productQuantities: '1:1,3:1',
+    paymentMode: 'Card ending in 4242',
+    deliveryAddress: '22 Market Street, Eco City',
+    couponApplied: 'GREEN10',
+    deliveryPartnerEmail: '',
+    deliveryStatus: '',
+    sellerConfirmed: false
+  },
+  {
+    orderId: 'ORD-5431',
+    email: 'buyer@bazaar.com',
+    orderDate: Date.now() - 3600000 * (24 * 8),
+    totalAmount: 4.99,
+    status: 'Delivered',
+    itemsSummary: '1x Premium Farms Organic Apples (1kg)',
+    productQuantities: '3:1',
+    paymentMode: 'Wallet',
+    deliveryAddress: '22 Market Street, Eco City',
+    deliveryPartnerEmail: 'rider@bazaar.com',
+    deliveryStatus: 'Delivered',
+    sellerConfirmed: true,
+    deliveredAt: Date.now() - 3600000 * (24 * 8)
+  },
+  {
+    orderId: 'ORD-1122',
+    email: 'buyer@bazaar.com',
+    orderDate: Date.now() - 3600000 * 12,
+    totalAmount: 139.98,
+    status: 'Delivered',
+    itemsSummary: '1x ZYL Sound Pro Wireless ANC',
+    productQuantities: '1:1',
+    paymentMode: 'Card ending in 1111',
+    deliveryAddress: '22 Market Street, Eco City',
+    deliveryPartnerEmail: 'rider@bazaar.com',
+    deliveryStatus: 'Delivered',
+    sellerConfirmed: true,
+    deliveredAt: Date.now() - 3600000 * 12,
+    returnRequestsJson: JSON.stringify([
+      {
+        id: 'RET-9901',
+        productId: '1',
+        productName: 'ZYL Sound Pro Wireless ANC',
+        customerEmail: 'buyer@bazaar.com',
+        sellerEmail: 'seller@store.com',
+        returnAmount: 129.99,
+        deliveryFee: 10.00,
+        reason: 'Faulty ANC feature',
+        status: 'Pending',
+        requestDate: Date.now() - 3600000 * 2
+      }
+    ])
+  }
 ];
 
 const defaultCategories = [
@@ -76,6 +134,30 @@ const defaultCategories = [
   { name: 'Home & Kitchen', isReturnable: true },
   { name: 'Food', isReturnable: false },
   { name: 'Vegetables', isReturnable: false }
+];
+
+const defaultWithdrawalRequests = [
+  {
+    id: 'WITH-101',
+    accountEmail: 'seller@store.com',
+    accountRole: 'Seller',
+    amount: 1500.00,
+    bankDetails: 'State Bank of India | A/C: 30981247921 | IFSC: SBIN0001234',
+    status: 'Pending',
+    requestDate: Date.now() - 3600000 * 6,
+    payoutId: ''
+  },
+  {
+    id: 'WITH-102',
+    accountEmail: 'rider@bazaar.com',
+    accountRole: 'DeliveryPartner',
+    amount: 450.00,
+    bankDetails: 'HDFC Bank | A/C: 501009871234 | IFSC: HDFC0000123',
+    status: 'Paid',
+    requestDate: Date.now() - 3600000 * 48,
+    paidAt: Date.now() - 3600000 * 24,
+    payoutId: 'PAY-880129'
+  }
 ];
 
 function roleLabel(role) {
@@ -437,6 +519,10 @@ function App() {
 
   useEffect(() => {
     const savedSession = window.localStorage.getItem('bazaarAdminSession');
+    const isDemo = window.localStorage.getItem('bazaarAdminDemoMode') === 'true';
+    if (isDemo) {
+      setUseMockData(true);
+    }
     if (savedSession) {
       try {
         const sessionUser = JSON.parse(savedSession);
@@ -466,7 +552,7 @@ function App() {
       setProducts(defaultProducts);
       setOrders(defaultOrders);
       setCategories(defaultCategories);
-      setWithdrawalRequests([]);
+      setWithdrawalRequests(defaultWithdrawalRequests);
       setCoupons([]);
       setLoading(false);
       return undefined;
@@ -724,6 +810,18 @@ function App() {
     }
   };
 
+  const handleDemoLogin = () => {
+    const sessionUser = {
+      email: 'admin@bazaar.com',
+      name: 'Demo Administrator',
+      role: 'Admin'
+    };
+    window.localStorage.setItem('bazaarAdminSession', JSON.stringify(sessionUser));
+    window.localStorage.setItem('bazaarAdminDemoMode', 'true');
+    setUseMockData(true);
+    setAuthUser(sessionUser);
+  };
+
   const handleLogout = async () => {
     try {
       await firebaseSignOut(auth);
@@ -731,6 +829,7 @@ function App() {
       console.warn('Firebase auth signout failed:', e);
     }
     window.localStorage.removeItem('bazaarAdminSession');
+    window.localStorage.removeItem('bazaarAdminDemoMode');
     setAuthUser(null);
     setUseMockData(false);
     setDbError(null);
@@ -1211,6 +1310,9 @@ function App() {
             <button className="btn btn-primary" type="submit" disabled={loginSubmitting}>
               {loginSubmitting ? <RefreshCw size={16} style={{ animation: 'spin 1.5s linear infinite' }} /> : <KeyRound size={16} />}
               Login
+            </button>
+            <button className="btn btn-secondary" type="button" onClick={handleDemoLogin} style={{ marginTop: '8px', width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>
+              <Sparkles size={16} /> Run in Demo Mode (Local Mock)
             </button>
           </form>
         </section>
