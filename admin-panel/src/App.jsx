@@ -30,7 +30,8 @@ import {
   setDoc,
   updateDoc
 } from 'firebase/firestore';
-import { db } from './firebase';
+import { signInWithEmailAndPassword, signOut as firebaseSignOut } from 'firebase/auth';
+import { db, auth } from './firebase';
 
 const ORDER_STATUSES = ['Pending', 'Processing', 'Ready to Deliver', 'Shipped', 'Delivered', 'Cancelled', 'Seller Reject Requested'];
 const ROLE_FILTERS = ['All', 'User', 'Seller', 'DeliveryPartner', 'Admin'];
@@ -687,20 +688,27 @@ function App() {
     setLoginSubmitting(true);
     try {
       const email = loginEmail.trim().toLowerCase();
+      // First sign in with Firebase Auth so the client gets authenticated
+      await signInWithEmailAndPassword(auth, email, loginPassword);
+
+      // Fetch the admin details (this check is now authorized because the client is logged in)
       const adminSnap = await getDoc(doc(db, 'users', email));
 
       if (!adminSnap.exists()) {
+        await firebaseSignOut(auth);
         setLoginError('No admin user found with this email.');
         return;
       }
 
       const adminUser = { ...adminSnap.data(), email: adminSnap.id || email };
       if (adminUser.role !== 'Admin') {
+        await firebaseSignOut(auth);
         setLoginError('This account is not marked as Admin.');
         return;
       }
 
       if ((adminUser.password || '') !== loginPassword) {
+        await firebaseSignOut(auth);
         setLoginError('Wrong password.');
         return;
       }
@@ -719,7 +727,12 @@ function App() {
     }
   };
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
+    try {
+      await firebaseSignOut(auth);
+    } catch (e) {
+      console.warn('Firebase auth signout failed:', e);
+    }
     window.localStorage.removeItem('bazaarAdminSession');
     setAuthUser(null);
     setUseMockData(false);
