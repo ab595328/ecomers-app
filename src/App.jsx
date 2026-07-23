@@ -480,7 +480,8 @@ function App() {
   const [withdrawalRequests, setWithdrawalRequests] = useState([]);
   const [loading, setLoading] = useState(false);
   const [dbError, setDbError] = useState(null);
-  const [useMockData, setUseMockData] = useState(false);
+  const [useMockData, setUseMockData] = useState(() => window.localStorage.getItem('bazaarAdminDemoMode') === 'true');
+
   const [dbStatusMsg, setDbStatusMsg] = useState('');
 
   const [userSearch, setUserSearch] = useState('');
@@ -1269,6 +1270,20 @@ function App() {
     }
   };
 
+  const isDeleteRoute = window.location.pathname === '/user-delete' ||
+    window.location.hash === '#/user-delete' ||
+    window.location.hash === '#user-delete';
+
+  if (isDeleteRoute) {
+    return (
+      <UserDeletePage
+        db={db}
+        auth={auth}
+        useMockData={useMockData}
+      />
+    );
+  }
+
   if (authLoading) {
     return (
       <div className="auth-screen">
@@ -1405,7 +1420,7 @@ function App() {
               {activeTab === 'categories' && 'Category Return Rules'}
               {activeTab === 'coupons' && 'Coupon Directory'}
               {activeTab === 'settings' && 'Service Area & Payout Settings'}
-            </h1 >
+            </h1>
             <p>
               {activeTab === 'dashboard' && 'Monitor marketplace stats, verification queues, revenue, and data tools.'}
               {activeTab === 'users' && 'Review buyers, sellers, delivery partners, admin accounts, and verification documents.'}
@@ -1416,9 +1431,9 @@ function App() {
               {activeTab === 'categories' && 'Add seller listing categories and define whether customers can request returns.'}
               {activeTab === 'coupons' && 'Create, configure, and monitor discount promo coupons.'}
               {activeTab === 'settings' && 'Control eligible cities, pincodes, and automatic Razorpay payout timing.'}
-            </p >
-          </div >
-        </header >
+            </p>
+          </div>
+        </header>
 
         {
           loading ? (
@@ -1655,7 +1670,6 @@ function App() {
                   )}
                 </div>
               )}
-
               {activeTab === 'products' && (
                 <ProductsTab
                   products={products}
@@ -2603,4 +2617,129 @@ function PaymentsTab({ entries, totals, payoutAccounts, withdrawalRequests, onUp
   );
 }
 
+function UserDeletePage({ db, auth, useMockData }) {
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [confirmCheckbox, setConfirmCheckbox] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [successMsg, setSuccessMsg] = useState('');
+
+  const handleInstantDelete = async (e) => {
+    e.preventDefault();
+    if (!confirmCheckbox) {
+      setError('Please check the confirmation box.');
+      return;
+    }
+    setError('');
+    setLoading(true);
+
+    try {
+      const emailTrim = email.trim().toLowerCase();
+      if (useMockData) {
+        // Mock instant delete success
+        setSuccessMsg('Account and database profile have been permanently deleted successfully (Demo Mode).');
+      } else {
+        // Sign in to verify password
+        await signInWithEmailAndPassword(auth, emailTrim, password);
+        
+        // Delete Firestore user profile
+        await deleteDoc(doc(db, 'users', emailTrim));
+        
+        // Delete request if it exists (cleanup)
+        try {
+          await deleteDoc(doc(db, 'deletion_requests', emailTrim));
+        } catch (e) {
+          // ignore
+        }
+
+        // Delete Firebase Auth User
+        if (auth.currentUser) {
+          await auth.currentUser.delete();
+        }
+
+        setSuccessMsg('Your account and all associated data have been permanently deleted. You have been logged out.');
+      }
+    } catch (err) {
+      setError(err.message || 'Authentication failed. Please verify your email and password.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  if (successMsg) {
+    return (
+      <div className="auth-screen">
+        <section className="glass-panel delete-card">
+          <div className="logo-container auth-logo">
+            <div className="logo-icon" style={{ backgroundColor: 'var(--color-success)' }}>
+              <CheckCircle size={22} color="#ffffff" />
+            </div>
+            <span className="logo-text">Bazaar Portal</span>
+          </div>
+          <h2 style={{ color: 'var(--color-success)', marginBottom: '1rem' }}>Account Deleted</h2>
+          <div className="warning-banner" style={{ backgroundColor: 'rgba(16, 189, 129, 0.08)', border: '1px solid rgba(16, 189, 129, 0.2)', color: '#d1fae5', margin: '1rem 0' }}>
+            {successMsg}
+          </div>
+          <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', textAlign: 'center', marginTop: '1.5rem' }}>
+            You can now close this tab safely.
+          </p>
+        </section>
+      </div>
+    );
+  }
+
+  return (
+    <div className="auth-screen">
+      <section className="glass-panel delete-card">
+        <div className="logo-container auth-logo">
+          <div className="logo-icon" style={{ backgroundColor: 'var(--color-danger)' }}>
+            <Trash2 size={22} color="#ffffff" />
+          </div>
+          <span className="logo-text">Bazaar Portal</span>
+        </div>
+        <h1>Delete Account</h1>
+        <p className="auth-copy">Instantly delete your profile and all associated data from our systems in accordance with Google Play developer guidelines.</p>
+
+        <div className="delete-info-box">
+          <strong>What happens when you delete your account:</strong>
+          <ul>
+            <li>Your user profile, name, and login credentials will be removed.</li>
+            <li>Any saved delivery addresses and mobile numbers are wiped.</li>
+            <li>Existing active orders will be processed, but personal details will be detached.</li>
+            <li>This action is permanent and cannot be undone.</li>
+          </ul>
+        </div>
+
+        {error && (
+          <div className="inline-alert" style={{ marginBottom: '1rem' }}>
+            <AlertTriangle size={16} />
+            {error}
+          </div>
+        )}
+
+        <form onSubmit={handleInstantDelete} className="auth-form">
+          <div className="form-group">
+            <label className="form-label">Registered Email</label>
+            <input className="form-control" type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="Enter account email" required />
+          </div>
+          <div className="form-group">
+            <label className="form-label">Account Password</label>
+            <input className="form-control" type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="Enter password to verify identity" required />
+          </div>
+          <label className="checkbox-label">
+            <input type="checkbox" checked={confirmCheckbox} onChange={e => setConfirmCheckbox(e.target.checked)} required />
+            <span>I confirm that I want to instantly delete my profile and understand this action is completely irreversible.</span>
+          </label>
+          <button className="btn btn-danger" type="submit" disabled={loading} style={{ marginTop: '0.5rem' }}>
+            {loading ? <RefreshCw size={16} style={{ animation: 'spin 1.5s linear infinite' }} /> : <Trash2 size={16} />}
+            Instantly Delete My Account
+          </button>
+        </form>
+      </section>
+    </div>
+  );
+}
+
 export default App;
+
